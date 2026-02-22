@@ -19,6 +19,9 @@ $(LIB): $(OBJ)
 demo: main.c tensor.h $(LIB)
 	$(CC) $(CFLAGS) main.c $(LIB) -lm -o demo
 
+llm: llm.c tensor.h $(LIB)
+	$(CC) $(CFLAGS) llm.c $(LIB) -lm -o llm
+
 tensor_test: tensor_test.c tensor.h $(LIB)
 	$(CC) $(CFLAGS) tensor_test.c $(LIB) -lm -o tensor_test
 
@@ -28,7 +31,10 @@ test: tensor_test
 run: demo
 	./demo
 
-clean:
-	rm -f demo tensor_test $(OBJ) $(LIB) tensor_test_single.bin tensor_test_snapshot.bin
+run-llm: llm
+	./llm
 
-.PHONY: all static test run clean
+clean:
+	rm -f demo llm tensor_test $(OBJ) $(LIB) tensor_test_single.bin tensor_test_snapshot.bin
+
+.PHONY: all static test run run-llm clean

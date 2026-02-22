@@ -65,3 +65,15 @@ cc -O2 -std=c11 -Wall -Wextra -pedantic your_program.c libtensor.a -lm -o your_p
 ## Demo
 
 `main.c` trains a small 2-layer network on synthetic data and prints training loss.
+
+## LLM Demo
+
+`llm.c` is a minimal character-level language model demo. It trains a small 2-layer MLP
+to predict the next character from a text corpus and then generates text from a prompt.
+
+Build and run:
+
+```bash
+make llm
+./llm shakespeare.txt 3000 "To be" 64 300 0.2 0.9 96
+```
