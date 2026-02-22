@@ -25,8 +25,19 @@ typedef struct {
     int cap;
 } TensorList;
 
+static int g_default_requires_grad = 0;
+
 static int tensor_numel(const Tensor *t) {
     return t->rows * t->cols;
+}
+
+static int infer_requires_grad(Tensor **parents, int n_parents) {
+    for (int i = 0; i < n_parents; i++) {
+        if (parents[i] && parents[i]->requires_grad) {
+            return 1;
+        }
+    }
+    return 0;
 }
 
 static void die(const char *msg) {
@@ -88,6 +99,22 @@ Tensor *tensor_from_array(int rows, int cols, const float *values, int requires_
     int n = tensor_numel(t);
     memcpy(t->data, values, sizeof(float) * (size_t)n);
     return t;
+}
+
+Tensor *tensor_create_default(int rows, int cols) {
+    return tensor_create(rows, cols, g_default_requires_grad);
+}
+
+Tensor *tensor_from_array_default(int rows, int cols, const float *values) {
+    return tensor_from_array(rows, cols, values, g_default_requires_grad);
+}
+
+void tensor_set_grad_mode(int enabled) {
+    g_default_requires_grad = enabled ? 1 : 0;
+}
+
+int tensor_get_grad_mode(void) {
+    return g_default_requires_grad;
 }
 
 void tensor_free(Tensor *t) {
@@ -244,8 +271,8 @@ static void backward_add(Tensor *out) {
 
 Tensor *tensor_add(Tensor *a, Tensor *b) {
     ensure_same_shape(a, b, "tensor_add: shape mismatch");
-    int req = a->requires_grad || b->requires_grad;
     Tensor *parents[2] = {a, b};
+    int req = infer_requires_grad(parents, 2);
     Tensor *out = tensor_new_op(a->rows, a->cols, req, OP_ADD, parents, 2, backward_add);
     int n = tensor_numel(out);
     for (int i = 0; i < n; i++) {
@@ -274,8 +301,8 @@ static void backward_sub(Tensor *out) {
 
 Tensor *tensor_sub(Tensor *a, Tensor *b) {
     ensure_same_shape(a, b, "tensor_sub: shape mismatch");
-    int req = a->requires_grad || b->requires_grad;
     Tensor *parents[2] = {a, b};
+    int req = infer_requires_grad(parents, 2);
     Tensor *out = tensor_new_op(a->rows, a->cols, req, OP_SUB, parents, 2, backward_sub);
     int n = tensor_numel(out);
     for (int i = 0; i < n; i++) {
@@ -304,8 +331,8 @@ static void backward_mul_elem(Tensor *out) {
 
 Tensor *tensor_mul_elem(Tensor *a, Tensor *b) {
     ensure_same_shape(a, b, "tensor_mul_elem: shape mismatch");
-    int req = a->requires_grad || b->requires_grad;
     Tensor *parents[2] = {a, b};
+    int req = infer_requires_grad(parents, 2);
     Tensor *out = tensor_new_op(a->rows, a->cols, req, OP_MUL_ELEM, parents, 2, backward_mul_elem);
     int n = tensor_numel(out);
     for (int i = 0; i < n; i++) {
@@ -327,8 +354,8 @@ static void backward_scalar_mul(Tensor *out) {
 }
 
 Tensor *tensor_scalar_mul(Tensor *a, float scalar) {
-    int req = a->requires_grad;
     Tensor *parents[1] = {a};
+    int req = infer_requires_grad(parents, 1);
     Tensor *out = tensor_new_op(a->rows, a->cols, req, OP_SCALAR_MUL, parents, 1, backward_scalar_mul);
     out->scalar = scalar;
     int n = tensor_numel(out);
@@ -373,8 +400,8 @@ Tensor *tensor_matmul(Tensor *a, Tensor *b) {
     if (a->cols != b->rows) {
         die("tensor_matmul: shape mismatch");
     }
-    int req = a->requires_grad || b->requires_grad;
     Tensor *parents[2] = {a, b};
+    int req = infer_requires_grad(parents, 2);
     Tensor *out = tensor_new_op(a->rows, b->cols, req, OP_MATMUL, parents, 2, backward_matmul);
 
     for (int i = 0; i < a->rows; i++) {
@@ -415,8 +442,8 @@ Tensor *tensor_add_bias(Tensor *x, Tensor *bias_row) {
     if (bias_row->rows != 1 || bias_row->cols != x->cols) {
         die("tensor_add_bias: bias must be shape [1, cols]");
     }
-    int req = x->requires_grad || bias_row->requires_grad;
     Tensor *parents[2] = {x, bias_row};
+    int req = infer_requires_grad(parents, 2);
     Tensor *out = tensor_new_op(x->rows, x->cols, req, OP_ADD_BIAS, parents, 2, backward_add_bias);
 
     for (int i = 0; i < x->rows; i++) {
@@ -441,7 +468,8 @@ static void backward_relu(Tensor *out) {
 
 Tensor *tensor_relu(Tensor *x) {
     Tensor *parents[1] = {x};
-    Tensor *out = tensor_new_op(x->rows, x->cols, x->requires_grad, OP_RELU, parents, 1, backward_relu);
+    int req = infer_requires_grad(parents, 1);
+    Tensor *out = tensor_new_op(x->rows, x->cols, req, OP_RELU, parents, 1, backward_relu);
     int n = tensor_numel(out);
     for (int i = 0; i < n; i++) {
         out->data[i] = x->data[i] > 0.0f ? x->data[i] : 0.0f;
@@ -464,7 +492,8 @@ static void backward_sigmoid(Tensor *out) {
 
 Tensor *tensor_sigmoid(Tensor *x) {
     Tensor *parents[1] = {x};
-    Tensor *out = tensor_new_op(x->rows, x->cols, x->requires_grad, OP_SIGMOID, parents, 1, backward_sigmoid);
+    int req = infer_requires_grad(parents, 1);
+    Tensor *out = tensor_new_op(x->rows, x->cols, req, OP_SIGMOID, parents, 1, backward_sigmoid);
     int n = tensor_numel(out);
     for (int i = 0; i < n; i++) {
         out->data[i] = 1.0f / (1.0f + expf(-x->data[i]));
@@ -487,7 +516,8 @@ static void backward_tanh(Tensor *out) {
 
 Tensor *tensor_tanh(Tensor *x) {
     Tensor *parents[1] = {x};
-    Tensor *out = tensor_new_op(x->rows, x->cols, x->requires_grad, OP_TANH, parents, 1, backward_tanh);
+    int req = infer_requires_grad(parents, 1);
+    Tensor *out = tensor_new_op(x->rows, x->cols, req, OP_TANH, parents, 1, backward_tanh);
     int n = tensor_numel(out);
     for (int i = 0; i < n; i++) {
         out->data[i] = tanhf(x->data[i]);
@@ -518,8 +548,8 @@ static void backward_mse(Tensor *out) {
 
 Tensor *tensor_mse_loss(Tensor *pred, Tensor *target) {
     ensure_same_shape(pred, target, "tensor_mse_loss: shape mismatch");
-    int req = pred->requires_grad || target->requires_grad;
     Tensor *parents[2] = {pred, target};
+    int req = infer_requires_grad(parents, 2);
     Tensor *out = tensor_new_op(1, 1, req, OP_MSE, parents, 2, backward_mse);
 
     int n = tensor_numel(pred);

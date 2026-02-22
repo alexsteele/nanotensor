@@ -22,7 +22,12 @@ struct Tensor {
 
 Tensor *tensor_create(int rows, int cols, int requires_grad);
 Tensor *tensor_from_array(int rows, int cols, const float *values, int requires_grad);
+Tensor *tensor_create_default(int rows, int cols);
+Tensor *tensor_from_array_default(int rows, int cols, const float *values);
 void tensor_free(Tensor *t);
+
+void tensor_set_grad_mode(int enabled);
+int tensor_get_grad_mode(void);
 
 void tensor_fill(Tensor *t, float value);
 void tensor_fill_randn(Tensor *t, float mean, float stddev, unsigned int *seed);
