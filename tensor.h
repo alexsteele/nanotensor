@@ -63,7 +63,10 @@ int tensor_allclose(Tensor *a, Tensor *b, float atol, float rtol);
 Tensor *tensor_relu(Tensor *x);
 Tensor *tensor_sigmoid(Tensor *x);
 Tensor *tensor_tanh(Tensor *x);
+Tensor *tensor_pow(Tensor *x, float exponent);
+Tensor *tensor_sqrt(Tensor *x);
 Tensor *tensor_softmax(Tensor *x);
+Tensor *tensor_layernorm(Tensor *x, Tensor *gamma, Tensor *beta, float eps);
 
 Tensor *tensor_mse_loss(Tensor *pred, Tensor *target);
 Tensor *tensor_cross_entropy(Tensor *pred_probs, Tensor *target_probs);

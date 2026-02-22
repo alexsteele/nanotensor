@@ -25,7 +25,10 @@ enum {
     OP_RELU,
     OP_SIGMOID,
     OP_TANH,
+    OP_POW,
+    OP_SQRT,
     OP_SOFTMAX,
+    OP_LAYERNORM,
     OP_MSE,
     OP_CROSS_ENTROPY
 };
@@ -1087,6 +1090,152 @@ Tensor *tensor_tanh(Tensor *x) {
     int n = tensor_numel(out);
     for (int i = 0; i < n; i++) {
         out->data[i] = tanhf(x->data[i]);
+    }
+    return out;
+}
+
+static void backward_pow(Tensor *out) {
+    Tensor *x = out->parents[0];
+    float exponent = out->scalar;
+    if (!x->requires_grad) {
+        return;
+    }
+    ensure_grad(x);
+    for (int i = 0; i < tensor_numel(x); i++) {
+        float xi = x->data[i];
+        float local_grad = exponent * powf(xi, exponent - 1.0f);
+        x->grad[i] += local_grad * out->grad[i];
+    }
+}
+
+Tensor *tensor_pow(Tensor *x, float exponent) {
+    Tensor *parents[1] = {x};
+    int req = infer_requires_grad(parents, 1);
+    Tensor *out = tensor_new_op(x->rows, x->cols, req, OP_POW, parents, 1, backward_pow);
+    out->scalar = exponent;
+    for (int i = 0; i < tensor_numel(x); i++) {
+        out->data[i] = powf(x->data[i], exponent);
+    }
+    return out;
+}
+
+static void backward_sqrt(Tensor *out) {
+    Tensor *x = out->parents[0];
+    if (!x->requires_grad) {
+        return;
+    }
+    ensure_grad(x);
+    for (int i = 0; i < tensor_numel(x); i++) {
+        float y = out->data[i];
+        float denom = 2.0f * (y > 1e-12f ? y : 1e-12f);
+        x->grad[i] += out->grad[i] / denom;
+    }
+}
+
+Tensor *tensor_sqrt(Tensor *x) {
+    Tensor *parents[1] = {x};
+    int req = infer_requires_grad(parents, 1);
+    Tensor *out = tensor_new_op(x->rows, x->cols, req, OP_SQRT, parents, 1, backward_sqrt);
+    for (int i = 0; i < tensor_numel(x); i++) {
+        out->data[i] = sqrtf(x->data[i]);
+    }
+    return out;
+}
+
+static void backward_layernorm(Tensor *out) {
+    Tensor *x = out->parents[0];
+    Tensor *gamma = out->parents[1];
+    Tensor *beta = out->parents[2];
+    float eps = out->scalar;
+    int d = x->cols;
+
+    if (gamma->requires_grad) {
+        ensure_grad(gamma);
+    }
+    if (beta->requires_grad) {
+        ensure_grad(beta);
+    }
+    if (x->requires_grad) {
+        ensure_grad(x);
+    }
+
+    for (int r = 0; r < x->rows; r++) {
+        float mean = 0.0f;
+        float var = 0.0f;
+        float inv_std;
+        float sum_dy_hat = 0.0f;
+        float sum_dy_hat_xhat = 0.0f;
+
+        for (int c = 0; c < d; c++) {
+            mean += x->data[r * d + c];
+        }
+        mean /= (float)d;
+        for (int c = 0; c < d; c++) {
+            float v = x->data[r * d + c] - mean;
+            var += v * v;
+        }
+        var /= (float)d;
+        inv_std = 1.0f / sqrtf(var + eps);
+
+        for (int c = 0; c < d; c++) {
+            int idx = r * d + c;
+            float xhat = (x->data[idx] - mean) * inv_std;
+            float dy = out->grad[idx];
+            float dy_hat = dy * gamma->data[c];
+            sum_dy_hat += dy_hat;
+            sum_dy_hat_xhat += dy_hat * xhat;
+
+            if (gamma->requires_grad) {
+                gamma->grad[c] += dy * xhat;
+            }
+            if (beta->requires_grad) {
+                beta->grad[c] += dy;
+            }
+        }
+
+        if (x->requires_grad) {
+            for (int c = 0; c < d; c++) {
+                int idx = r * d + c;
+                float xhat = (x->data[idx] - mean) * inv_std;
+                float dy = out->grad[idx];
+                float dy_hat = dy * gamma->data[c];
+                x->grad[idx] += (inv_std / (float)d) *
+                               ((float)d * dy_hat - sum_dy_hat - xhat * sum_dy_hat_xhat);
+            }
+        }
+    }
+}
+
+Tensor *tensor_layernorm(Tensor *x, Tensor *gamma, Tensor *beta, float eps) {
+    Tensor *parents[3] = {x, gamma, beta};
+    int req;
+    Tensor *out;
+    if (gamma->rows != 1 || beta->rows != 1 || gamma->cols != x->cols || beta->cols != x->cols) {
+        die("tensor_layernorm: gamma/beta must be shape [1, x->cols]");
+    }
+    req = infer_requires_grad(parents, 3);
+    out = tensor_new_op(x->rows, x->cols, req, OP_LAYERNORM, parents, 3, backward_layernorm);
+    out->scalar = eps;
+
+    for (int r = 0; r < x->rows; r++) {
+        float mean = 0.0f;
+        float var = 0.0f;
+        float inv_std;
+        for (int c = 0; c < x->cols; c++) {
+            mean += x->data[r * x->cols + c];
+        }
+        mean /= (float)x->cols;
+        for (int c = 0; c < x->cols; c++) {
+            float v = x->data[r * x->cols + c] - mean;
+            var += v * v;
+        }
+        var /= (float)x->cols;
+        inv_std = 1.0f / sqrtf(var + eps);
+        for (int c = 0; c < x->cols; c++) {
+            int idx = r * x->cols + c;
+            float xhat = (x->data[idx] - mean) * inv_std;
+            out->data[idx] = xhat * gamma->data[c] + beta->data[c];
+        }
     }
     return out;
 }
