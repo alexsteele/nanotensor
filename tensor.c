@@ -666,6 +666,48 @@ Tensor *tensor_add_bias(Tensor *x, Tensor *bias_row) {
     return out;
 }
 
+Tensor *tensor_cmp(Tensor *a, Tensor *b) {
+    ensure_same_shape(a, b, "tensor_cmp: shape mismatch");
+    Tensor *out = tensor_create(a->rows, a->cols, 0);
+    int n = tensor_numel(out);
+    for (int i = 0; i < n; i++) {
+        if (a->data[i] < b->data[i]) {
+            out->data[i] = -1.0f;
+        } else if (a->data[i] > b->data[i]) {
+            out->data[i] = 1.0f;
+        } else {
+            out->data[i] = 0.0f;
+        }
+    }
+    return out;
+}
+
+int tensor_equal(Tensor *a, Tensor *b) {
+    ensure_same_shape(a, b, "tensor_equal: shape mismatch");
+    int n = tensor_numel(a);
+    for (int i = 0; i < n; i++) {
+        if (a->data[i] != b->data[i]) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+int tensor_allclose(Tensor *a, Tensor *b, float atol, float rtol) {
+    ensure_same_shape(a, b, "tensor_allclose: shape mismatch");
+    int n = tensor_numel(a);
+    for (int i = 0; i < n; i++) {
+        float ai = a->data[i];
+        float bi = b->data[i];
+        float diff = fabsf(ai - bi);
+        float tol = atol + rtol * fabsf(bi);
+        if (diff > tol) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 static void backward_relu(Tensor *out) {
     Tensor *x = out->parents[0];
     if (!x->requires_grad) {

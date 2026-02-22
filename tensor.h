@@ -48,6 +48,9 @@ Tensor *tensor_mul_elem(Tensor *a, Tensor *b);
 Tensor *tensor_scalar_mul(Tensor *a, float scalar);
 Tensor *tensor_matmul(Tensor *a, Tensor *b);
 Tensor *tensor_add_bias(Tensor *x, Tensor *bias_row);
+Tensor *tensor_cmp(Tensor *a, Tensor *b);
+int tensor_equal(Tensor *a, Tensor *b);
+int tensor_allclose(Tensor *a, Tensor *b, float atol, float rtol);
 
 Tensor *tensor_relu(Tensor *x);
 Tensor *tensor_sigmoid(Tensor *x);
