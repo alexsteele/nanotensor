@@ -2,6 +2,7 @@
 #define TENSOR_H
 
 #include <stddef.h>
+#include <stdio.h>
 
 typedef struct Tensor Tensor;
 
@@ -34,6 +35,12 @@ void tensor_fill_randn(Tensor *t, float mean, float stddev, unsigned int *seed);
 void tensor_zero_grad(Tensor *t);
 void tensor_print_shape(const Tensor *t);
 void tensor_print(const Tensor *t, const char *name, int print_grad);
+int tensor_save_file(const Tensor *t, FILE *f);
+Tensor *tensor_load_file(FILE *f);
+int tensor_save(const Tensor *t, const char *path);
+Tensor *tensor_load(const char *path);
+int tensor_snapshot_save(Tensor **tensors, size_t count, const char *path);
+int tensor_snapshot_load(Tensor **tensors, size_t count, const char *path);
 
 Tensor *tensor_add(Tensor *a, Tensor *b);
 Tensor *tensor_sub(Tensor *a, Tensor *b);

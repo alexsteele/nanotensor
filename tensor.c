@@ -1,6 +1,7 @@
 #include "tensor.h"
 
 #include <math.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -26,9 +27,28 @@ typedef struct {
 } TensorList;
 
 static int g_default_requires_grad = 0;
+static const uint32_t k_tensor_magic = 0x544e5352U;   /* "TNSR" */
+static const uint32_t k_snapshot_magic = 0x4e545350U; /* "NTSP" */
+static const uint32_t k_file_version = 1U;
 
 static int tensor_numel(const Tensor *t) {
     return t->rows * t->cols;
+}
+
+static int write_u32(FILE *f, uint32_t v) {
+    return fwrite(&v, sizeof(v), 1, f) == 1 ? 0 : -1;
+}
+
+static int write_u64(FILE *f, uint64_t v) {
+    return fwrite(&v, sizeof(v), 1, f) == 1 ? 0 : -1;
+}
+
+static int read_u32(FILE *f, uint32_t *out) {
+    return fread(out, sizeof(*out), 1, f) == 1 ? 0 : -1;
+}
+
+static int read_u64(FILE *f, uint64_t *out) {
+    return fread(out, sizeof(*out), 1, f) == 1 ? 0 : -1;
 }
 
 static int infer_requires_grad(Tensor **parents, int n_parents) {
@@ -39,6 +59,10 @@ static int infer_requires_grad(Tensor **parents, int n_parents) {
     }
     return 0;
 }
+
+static int tensor_write_payload(FILE *f, const Tensor *t);
+static Tensor *tensor_read_payload_new(FILE *f);
+static int tensor_read_payload_into(FILE *f, Tensor *t);
 
 static void die(const char *msg) {
     fprintf(stderr, "tensor error: %s\n", msg);
@@ -217,6 +241,125 @@ void tensor_print(const Tensor *t, const char *name, int print_grad) {
     }
 }
 
+int tensor_save_file(const Tensor *t, FILE *f) {
+    if (!f || !t) {
+        return -1;
+    }
+    if (write_u32(f, k_tensor_magic) != 0 || write_u32(f, k_file_version) != 0) {
+        return -1;
+    }
+    return tensor_write_payload(f, t);
+}
+
+Tensor *tensor_load_file(FILE *f) {
+    uint32_t magic = 0;
+    uint32_t version = 0;
+
+    if (!f) {
+        return NULL;
+    }
+    if (read_u32(f, &magic) != 0 || read_u32(f, &version) != 0) {
+        return NULL;
+    }
+    if (magic != k_tensor_magic || version != k_file_version) {
+        return NULL;
+    }
+    return tensor_read_payload_new(f);
+}
+
+int tensor_save(const Tensor *t, const char *path) {
+    FILE *f;
+    int ok;
+    if (!path || !t) {
+        return -1;
+    }
+    f = fopen(path, "wb");
+    if (!f) {
+        return -1;
+    }
+    ok = tensor_save_file(t, f);
+    if (fclose(f) != 0) {
+        return -1;
+    }
+    return ok;
+}
+
+Tensor *tensor_load(const char *path) {
+    FILE *f;
+    Tensor *t;
+    if (!path) {
+        return NULL;
+    }
+    f = fopen(path, "rb");
+    if (!f) {
+        return NULL;
+    }
+    t = tensor_load_file(f);
+    fclose(f);
+    return t;
+}
+
+int tensor_snapshot_save(Tensor **tensors, size_t count, const char *path) {
+    FILE *f;
+    if (!path || (!tensors && count > 0)) {
+        return -1;
+    }
+    f = fopen(path, "wb");
+    if (!f) {
+        return -1;
+    }
+    if (write_u32(f, k_snapshot_magic) != 0 ||
+        write_u32(f, k_file_version) != 0 ||
+        write_u64(f, (uint64_t)count) != 0) {
+        fclose(f);
+        return -1;
+    }
+    for (size_t i = 0; i < count; i++) {
+        if (!tensors[i] || tensor_write_payload(f, tensors[i]) != 0) {
+            fclose(f);
+            return -1;
+        }
+    }
+    if (fclose(f) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
+int tensor_snapshot_load(Tensor **tensors, size_t count, const char *path) {
+    FILE *f;
+    uint32_t magic = 0;
+    uint32_t version = 0;
+    uint64_t file_count = 0;
+    if (!path || (!tensors && count > 0)) {
+        return -1;
+    }
+    f = fopen(path, "rb");
+    if (!f) {
+        return -1;
+    }
+    if (read_u32(f, &magic) != 0 ||
+        read_u32(f, &version) != 0 ||
+        read_u64(f, &file_count) != 0) {
+        fclose(f);
+        return -1;
+    }
+    if (magic != k_snapshot_magic || version != k_file_version || file_count != (uint64_t)count) {
+        fclose(f);
+        return -1;
+    }
+    for (size_t i = 0; i < count; i++) {
+        if (!tensors[i] || tensor_read_payload_into(f, tensors[i]) != 0) {
+            fclose(f);
+            return -1;
+        }
+    }
+    if (fclose(f) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
 static Tensor *tensor_new_op(int rows, int cols, int requires_grad, int op, Tensor **parents, int n_parents,
                              void (*backward_fn)(Tensor *)) {
     Tensor *out = tensor_create(rows, cols, requires_grad);
@@ -249,6 +392,75 @@ static void ensure_grad(Tensor *t) {
             die("out of memory");
         }
     }
+}
+
+static int tensor_set_requires_grad(Tensor *t, int requires_grad) {
+    t->requires_grad = requires_grad ? 1 : 0;
+    if (t->requires_grad) {
+        ensure_grad(t);
+        tensor_zero_grad(t);
+    } else if (t->grad) {
+        free(t->grad);
+        t->grad = NULL;
+    }
+    return 0;
+}
+
+static int tensor_write_payload(FILE *f, const Tensor *t) {
+    uint32_t rows = (uint32_t)t->rows;
+    uint32_t cols = (uint32_t)t->cols;
+    uint32_t req = (uint32_t)(t->requires_grad ? 1 : 0);
+    int n = tensor_numel(t);
+
+    if (write_u32(f, rows) != 0 || write_u32(f, cols) != 0 || write_u32(f, req) != 0) {
+        return -1;
+    }
+    if (fwrite(t->data, sizeof(float), (size_t)n, f) != (size_t)n) {
+        return -1;
+    }
+    return 0;
+}
+
+static Tensor *tensor_read_payload_new(FILE *f) {
+    uint32_t rows = 0;
+    uint32_t cols = 0;
+    uint32_t req = 0;
+
+    if (read_u32(f, &rows) != 0 || read_u32(f, &cols) != 0 || read_u32(f, &req) != 0) {
+        return NULL;
+    }
+    if (rows == 0 || cols == 0 || rows > 2147483647U || cols > 2147483647U) {
+        return NULL;
+    }
+
+    Tensor *t = tensor_create((int)rows, (int)cols, req ? 1 : 0);
+    int n = tensor_numel(t);
+    if (fread(t->data, sizeof(float), (size_t)n, f) != (size_t)n) {
+        tensor_free(t);
+        return NULL;
+    }
+    return t;
+}
+
+static int tensor_read_payload_into(FILE *f, Tensor *t) {
+    uint32_t rows = 0;
+    uint32_t cols = 0;
+    uint32_t req = 0;
+    int n = tensor_numel(t);
+
+    if (read_u32(f, &rows) != 0 || read_u32(f, &cols) != 0 || read_u32(f, &req) != 0) {
+        return -1;
+    }
+    if ((int)rows != t->rows || (int)cols != t->cols) {
+        return -1;
+    }
+    if (tensor_set_requires_grad(t, req ? 1 : 0) != 0) {
+        return -1;
+    }
+    if (fread(t->data, sizeof(float), (size_t)n, f) != (size_t)n) {
+        return -1;
+    }
+    return 0;
 }
 
 static void backward_add(Tensor *out) {

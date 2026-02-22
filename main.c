@@ -85,9 +85,34 @@ int main(void) {
     Tensor *out_lin = tensor_matmul(h1, W2);
     Tensor *pred = tensor_add_bias(out_lin, b2);
     Tensor *final_loss = tensor_mse_loss(pred, Y);
+    float final_loss_value = final_loss->data[0];
 
     printf("final loss %.6f\n", final_loss->data[0]);
 
+    tensor_free(h1_lin);
+    tensor_free(h1_bias);
+    tensor_free(h1);
+    tensor_free(out_lin);
+    tensor_free(pred);
+    tensor_free(final_loss);
+
+    if (tensor_snapshot_save(params, n_params, "model_snapshot.bin") != 0) {
+        fprintf(stderr, "failed to save snapshot\n");
+        return 1;
+    }
+    W1->data[0] += 5.0f;
+    if (tensor_snapshot_load(params, n_params, "model_snapshot.bin") != 0) {
+        fprintf(stderr, "failed to load snapshot\n");
+        return 1;
+    }
+
+    h1_lin = tensor_matmul(X, W1);
+    h1_bias = tensor_add_bias(h1_lin, b1);
+    h1 = tensor_tanh(h1_bias);
+    out_lin = tensor_matmul(h1, W2);
+    pred = tensor_add_bias(out_lin, b2);
+    final_loss = tensor_mse_loss(pred, Y);
+    printf("reloaded loss %.6f (was %.6f)\n", final_loss->data[0], final_loss_value);
     tensor_free(h1_lin);
     tensor_free(h1_bias);
     tensor_free(h1);
