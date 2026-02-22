@@ -14,6 +14,8 @@ enum {
     OP_SCALAR_MUL,
     OP_MATMUL,
     OP_ADD_BIAS,
+    OP_RESHAPE,
+    OP_TRANSPOSE,
     OP_RELU,
     OP_SIGMOID,
     OP_TANH,
@@ -131,6 +133,18 @@ Tensor *tensor_create_default(int rows, int cols) {
 
 Tensor *tensor_from_array_default(int rows, int cols, const float *values) {
     return tensor_from_array(rows, cols, values, g_default_requires_grad);
+}
+
+Tensor *tensor_cpy(Tensor *a) {
+    Tensor *out;
+    int n;
+    if (!a) {
+        return NULL;
+    }
+    out = tensor_create(a->rows, a->cols, a->requires_grad);
+    n = tensor_numel(a);
+    memcpy(out->data, a->data, sizeof(float) * (size_t)n);
+    return out;
 }
 
 void tensor_set_grad_mode(int enabled) {
@@ -380,6 +394,13 @@ static Tensor *tensor_new_op(int rows, int cols, int requires_grad, int op, Tens
 
 static void ensure_same_shape(Tensor *a, Tensor *b, const char *who) {
     if (a->rows != b->rows || a->cols != b->cols) {
+        die(who);
+    }
+}
+
+static void ensure_slice_bounds(Tensor *a, int row_start, int row_end, int col_start, int col_end, const char *who) {
+    if (row_start < 0 || row_end < row_start || row_end > a->rows ||
+        col_start < 0 || col_end < col_start || col_end > a->cols) {
         die(who);
     }
 }
@@ -661,6 +682,76 @@ Tensor *tensor_add_bias(Tensor *x, Tensor *bias_row) {
     for (int i = 0; i < x->rows; i++) {
         for (int j = 0; j < x->cols; j++) {
             out->data[i * out->cols + j] = x->data[i * x->cols + j] + bias_row->data[j];
+        }
+    }
+    return out;
+}
+
+static void backward_reshape(Tensor *out) {
+    Tensor *a = out->parents[0];
+    if (!a->requires_grad) {
+        return;
+    }
+    ensure_grad(a);
+    int n = tensor_numel(a);
+    for (int i = 0; i < n; i++) {
+        a->grad[i] += out->grad[i];
+    }
+}
+
+Tensor *tensor_reshape(Tensor *a, int rows, int cols) {
+    if (rows <= 0 || cols <= 0 || rows * cols != tensor_numel(a)) {
+        die("tensor_reshape: invalid shape");
+    }
+    Tensor *parents[1] = {a};
+    int req = infer_requires_grad(parents, 1);
+    Tensor *out = tensor_new_op(rows, cols, req, OP_RESHAPE, parents, 1, backward_reshape);
+    int n = tensor_numel(a);
+    for (int i = 0; i < n; i++) {
+        out->data[i] = a->data[i];
+    }
+    return out;
+}
+
+static void backward_transpose(Tensor *out) {
+    Tensor *a = out->parents[0];
+    if (!a->requires_grad) {
+        return;
+    }
+    ensure_grad(a);
+    for (int i = 0; i < out->rows; i++) {
+        for (int j = 0; j < out->cols; j++) {
+            a->grad[j * a->cols + i] += out->grad[i * out->cols + j];
+        }
+    }
+}
+
+Tensor *tensor_transpose(Tensor *a) {
+    Tensor *parents[1] = {a};
+    int req = infer_requires_grad(parents, 1);
+    Tensor *out = tensor_new_op(a->cols, a->rows, req, OP_TRANSPOSE, parents, 1, backward_transpose);
+    for (int i = 0; i < a->rows; i++) {
+        for (int j = 0; j < a->cols; j++) {
+            out->data[j * out->cols + i] = a->data[i * a->cols + j];
+        }
+    }
+    return out;
+}
+
+Tensor *tensor_slice(Tensor *a, int row_start, int row_end, int col_start, int col_end) {
+    ensure_slice_bounds(a, row_start, row_end, col_start, col_end, "tensor_slice: invalid range");
+    int out_rows = row_end - row_start;
+    int out_cols = col_end - col_start;
+    if (out_rows <= 0 || out_cols <= 0) {
+        die("tensor_slice: empty slice");
+    }
+
+    /* Slice is a detached copy for now (not a view, no gradient link). */
+    Tensor *out = tensor_create(out_rows, out_cols, 0);
+
+    for (int i = 0; i < out_rows; i++) {
+        for (int j = 0; j < out_cols; j++) {
+            out->data[i * out_cols + j] = a->data[(row_start + i) * a->cols + (col_start + j)];
         }
     }
     return out;

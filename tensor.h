@@ -25,6 +25,7 @@ Tensor *tensor_create(int rows, int cols, int requires_grad);
 Tensor *tensor_from_array(int rows, int cols, const float *values, int requires_grad);
 Tensor *tensor_create_default(int rows, int cols);
 Tensor *tensor_from_array_default(int rows, int cols, const float *values);
+Tensor *tensor_cpy(Tensor *a);
 void tensor_free(Tensor *t);
 
 void tensor_set_grad_mode(int enabled);
@@ -48,6 +49,9 @@ Tensor *tensor_mul_elem(Tensor *a, Tensor *b);
 Tensor *tensor_scalar_mul(Tensor *a, float scalar);
 Tensor *tensor_matmul(Tensor *a, Tensor *b);
 Tensor *tensor_add_bias(Tensor *x, Tensor *bias_row);
+Tensor *tensor_reshape(Tensor *a, int rows, int cols);
+Tensor *tensor_transpose(Tensor *a);
+Tensor *tensor_slice(Tensor *a, int row_start, int row_end, int col_start, int col_end);
 Tensor *tensor_cmp(Tensor *a, Tensor *b);
 int tensor_equal(Tensor *a, Tensor *b);
 int tensor_allclose(Tensor *a, Tensor *b, float atol, float rtol);
