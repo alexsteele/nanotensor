@@ -11,11 +11,17 @@ enum {
     OP_ADD,
     OP_SUB,
     OP_MUL_ELEM,
+    OP_ADD_BROADCAST,
+    OP_MUL_BROADCAST,
     OP_SCALAR_MUL,
     OP_MATMUL,
     OP_ADD_BIAS,
     OP_RESHAPE,
     OP_TRANSPOSE,
+    OP_SUM_AXIS0,
+    OP_SUM_AXIS1,
+    OP_MEAN_AXIS0,
+    OP_MEAN_AXIS1,
     OP_RELU,
     OP_SIGMOID,
     OP_TANH,
@@ -400,6 +406,21 @@ static void ensure_same_shape(Tensor *a, Tensor *b, const char *who) {
     }
 }
 
+static void infer_broadcast_shape(Tensor *a, Tensor *b, int *out_rows, int *out_cols, const char *who) {
+    int rows;
+    int cols;
+    if ((a->rows != b->rows) && (a->rows != 1) && (b->rows != 1)) {
+        die(who);
+    }
+    if ((a->cols != b->cols) && (a->cols != 1) && (b->cols != 1)) {
+        die(who);
+    }
+    rows = a->rows > b->rows ? a->rows : b->rows;
+    cols = a->cols > b->cols ? a->cols : b->cols;
+    *out_rows = rows;
+    *out_cols = cols;
+}
+
 static void ensure_slice_bounds(Tensor *a, int row_start, int row_end, int col_start, int col_end, const char *who) {
     if (row_start < 0 || row_end < row_start || row_end > a->rows ||
         col_start < 0 || col_end < col_start || col_end > a->cols) {
@@ -574,6 +595,204 @@ Tensor *tensor_mul_elem(Tensor *a, Tensor *b) {
         out->data[i] = a->data[i] * b->data[i];
     }
     return out;
+}
+
+static void backward_add_broadcast(Tensor *out) {
+    Tensor *a = out->parents[0];
+    Tensor *b = out->parents[1];
+    if (a->requires_grad) {
+        ensure_grad(a);
+    }
+    if (b->requires_grad) {
+        ensure_grad(b);
+    }
+    for (int i = 0; i < out->rows; i++) {
+        for (int j = 0; j < out->cols; j++) {
+            int oi = i * out->cols + j;
+            int ai = (a->rows == 1 ? 0 : i) * a->cols + (a->cols == 1 ? 0 : j);
+            int bi = (b->rows == 1 ? 0 : i) * b->cols + (b->cols == 1 ? 0 : j);
+            if (a->requires_grad) {
+                a->grad[ai] += out->grad[oi];
+            }
+            if (b->requires_grad) {
+                b->grad[bi] += out->grad[oi];
+            }
+        }
+    }
+}
+
+Tensor *tensor_add_broadcast(Tensor *a, Tensor *b) {
+    int out_rows;
+    int out_cols;
+    Tensor *parents[2] = {a, b};
+    int req;
+    Tensor *out;
+    infer_broadcast_shape(a, b, &out_rows, &out_cols, "tensor_add_broadcast: shape mismatch");
+    req = infer_requires_grad(parents, 2);
+    out = tensor_new_op(out_rows, out_cols, req, OP_ADD_BROADCAST, parents, 2, backward_add_broadcast);
+    for (int i = 0; i < out_rows; i++) {
+        for (int j = 0; j < out_cols; j++) {
+            int oi = i * out_cols + j;
+            int ai = (a->rows == 1 ? 0 : i) * a->cols + (a->cols == 1 ? 0 : j);
+            int bi = (b->rows == 1 ? 0 : i) * b->cols + (b->cols == 1 ? 0 : j);
+            out->data[oi] = a->data[ai] + b->data[bi];
+        }
+    }
+    return out;
+}
+
+static void backward_mul_broadcast(Tensor *out) {
+    Tensor *a = out->parents[0];
+    Tensor *b = out->parents[1];
+    if (a->requires_grad) {
+        ensure_grad(a);
+    }
+    if (b->requires_grad) {
+        ensure_grad(b);
+    }
+    for (int i = 0; i < out->rows; i++) {
+        for (int j = 0; j < out->cols; j++) {
+            int oi = i * out->cols + j;
+            int ai = (a->rows == 1 ? 0 : i) * a->cols + (a->cols == 1 ? 0 : j);
+            int bi = (b->rows == 1 ? 0 : i) * b->cols + (b->cols == 1 ? 0 : j);
+            if (a->requires_grad) {
+                a->grad[ai] += b->data[bi] * out->grad[oi];
+            }
+            if (b->requires_grad) {
+                b->grad[bi] += a->data[ai] * out->grad[oi];
+            }
+        }
+    }
+}
+
+Tensor *tensor_mul_broadcast(Tensor *a, Tensor *b) {
+    int out_rows;
+    int out_cols;
+    Tensor *parents[2] = {a, b};
+    int req;
+    Tensor *out;
+    infer_broadcast_shape(a, b, &out_rows, &out_cols, "tensor_mul_broadcast: shape mismatch");
+    req = infer_requires_grad(parents, 2);
+    out = tensor_new_op(out_rows, out_cols, req, OP_MUL_BROADCAST, parents, 2, backward_mul_broadcast);
+    for (int i = 0; i < out_rows; i++) {
+        for (int j = 0; j < out_cols; j++) {
+            int oi = i * out_cols + j;
+            int ai = (a->rows == 1 ? 0 : i) * a->cols + (a->cols == 1 ? 0 : j);
+            int bi = (b->rows == 1 ? 0 : i) * b->cols + (b->cols == 1 ? 0 : j);
+            out->data[oi] = a->data[ai] * b->data[bi];
+        }
+    }
+    return out;
+}
+
+static void backward_sum_axis0(Tensor *out) {
+    Tensor *a = out->parents[0];
+    if (!a->requires_grad) {
+        return;
+    }
+    ensure_grad(a);
+    for (int j = 0; j < a->cols; j++) {
+        float g = out->grad[j];
+        for (int i = 0; i < a->rows; i++) {
+            a->grad[i * a->cols + j] += g;
+        }
+    }
+}
+
+static void backward_sum_axis1(Tensor *out) {
+    Tensor *a = out->parents[0];
+    if (!a->requires_grad) {
+        return;
+    }
+    ensure_grad(a);
+    for (int i = 0; i < a->rows; i++) {
+        float g = out->grad[i];
+        for (int j = 0; j < a->cols; j++) {
+            a->grad[i * a->cols + j] += g;
+        }
+    }
+}
+
+Tensor *tensor_sum_axis(Tensor *a, int axis) {
+    Tensor *parents[1] = {a};
+    int req = infer_requires_grad(parents, 1);
+    Tensor *out;
+    if (axis == 0) {
+        out = tensor_new_op(1, a->cols, req, OP_SUM_AXIS0, parents, 1, backward_sum_axis0);
+        for (int j = 0; j < a->cols; j++) {
+            float acc = 0.0f;
+            for (int i = 0; i < a->rows; i++) {
+                acc += a->data[i * a->cols + j];
+            }
+            out->data[j] = acc;
+        }
+        return out;
+    }
+    if (axis == 1) {
+        out = tensor_new_op(a->rows, 1, req, OP_SUM_AXIS1, parents, 1, backward_sum_axis1);
+        for (int i = 0; i < a->rows; i++) {
+            float acc = 0.0f;
+            for (int j = 0; j < a->cols; j++) {
+                acc += a->data[i * a->cols + j];
+            }
+            out->data[i] = acc;
+        }
+        return out;
+    }
+    die("tensor_sum_axis: axis must be 0 or 1");
+    return NULL;
+}
+
+static void backward_mean_axis0(Tensor *out) {
+    Tensor *a = out->parents[0];
+    float scale = 1.0f / (float)a->rows;
+    if (!a->requires_grad) {
+        return;
+    }
+    ensure_grad(a);
+    for (int j = 0; j < a->cols; j++) {
+        float g = out->grad[j] * scale;
+        for (int i = 0; i < a->rows; i++) {
+            a->grad[i * a->cols + j] += g;
+        }
+    }
+}
+
+static void backward_mean_axis1(Tensor *out) {
+    Tensor *a = out->parents[0];
+    float scale = 1.0f / (float)a->cols;
+    if (!a->requires_grad) {
+        return;
+    }
+    ensure_grad(a);
+    for (int i = 0; i < a->rows; i++) {
+        float g = out->grad[i] * scale;
+        for (int j = 0; j < a->cols; j++) {
+            a->grad[i * a->cols + j] += g;
+        }
+    }
+}
+
+Tensor *tensor_mean_axis(Tensor *a, int axis) {
+    Tensor *out = tensor_sum_axis(a, axis);
+    if (axis == 0) {
+        out->op = OP_MEAN_AXIS0;
+        out->backward_fn = backward_mean_axis0;
+        for (int j = 0; j < out->cols; j++) {
+            out->data[j] /= (float)a->rows;
+        }
+        return out;
+    }
+    if (axis == 1) {
+        out->op = OP_MEAN_AXIS1;
+        out->backward_fn = backward_mean_axis1;
+        for (int i = 0; i < out->rows; i++) {
+            out->data[i] /= (float)a->cols;
+        }
+        return out;
+    }
+    die("tensor_mean_axis: axis must be 0 or 1");
+    return NULL;
 }
 
 static void backward_scalar_mul(Tensor *out) {
