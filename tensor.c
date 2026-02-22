@@ -19,7 +19,9 @@ enum {
     OP_RELU,
     OP_SIGMOID,
     OP_TANH,
-    OP_MSE
+    OP_SOFTMAX,
+    OP_MSE,
+    OP_CROSS_ENTROPY
 };
 
 typedef struct {
@@ -867,6 +869,94 @@ Tensor *tensor_tanh(Tensor *x) {
     for (int i = 0; i < n; i++) {
         out->data[i] = tanhf(x->data[i]);
     }
+    return out;
+}
+
+static void backward_softmax(Tensor *out) {
+    Tensor *x = out->parents[0];
+    if (!x->requires_grad) {
+        return;
+    }
+    ensure_grad(x);
+    for (int r = 0; r < out->rows; r++) {
+        float dot = 0.0f;
+        for (int c = 0; c < out->cols; c++) {
+            int idx = r * out->cols + c;
+            dot += out->grad[idx] * out->data[idx];
+        }
+        for (int c = 0; c < out->cols; c++) {
+            int idx = r * out->cols + c;
+            x->grad[idx] += out->data[idx] * (out->grad[idx] - dot);
+        }
+    }
+}
+
+Tensor *tensor_softmax(Tensor *x) {
+    Tensor *parents[1] = {x};
+    int req = infer_requires_grad(parents, 1);
+    Tensor *out = tensor_new_op(x->rows, x->cols, req, OP_SOFTMAX, parents, 1, backward_softmax);
+
+    for (int r = 0; r < x->rows; r++) {
+        float maxv = x->data[r * x->cols];
+        float sum = 0.0f;
+        for (int c = 1; c < x->cols; c++) {
+            float v = x->data[r * x->cols + c];
+            if (v > maxv) {
+                maxv = v;
+            }
+        }
+        for (int c = 0; c < x->cols; c++) {
+            float e = expf(x->data[r * x->cols + c] - maxv);
+            out->data[r * out->cols + c] = e;
+            sum += e;
+        }
+        for (int c = 0; c < x->cols; c++) {
+            out->data[r * out->cols + c] /= sum;
+        }
+    }
+    return out;
+}
+
+static void backward_cross_entropy(Tensor *out) {
+    const float eps = 1e-12f;
+    Tensor *pred = out->parents[0];
+    Tensor *target = out->parents[1];
+    float g = out->grad[0] / (float)pred->rows;
+
+    if (pred->requires_grad) {
+        ensure_grad(pred);
+        for (int i = 0; i < tensor_numel(pred); i++) {
+            float p = pred->data[i] > eps ? pred->data[i] : eps;
+            pred->grad[i] += g * (-target->data[i] / p);
+        }
+    }
+    if (target->requires_grad) {
+        ensure_grad(target);
+        for (int i = 0; i < tensor_numel(target); i++) {
+            float p = pred->data[i] > eps ? pred->data[i] : eps;
+            target->grad[i] += g * (-logf(p));
+        }
+    }
+}
+
+Tensor *tensor_cross_entropy(Tensor *pred_probs, Tensor *target_probs) {
+    const float eps = 1e-12f;
+    ensure_same_shape(pred_probs, target_probs, "tensor_cross_entropy: shape mismatch");
+    Tensor *parents[2] = {pred_probs, target_probs};
+    int req = infer_requires_grad(parents, 2);
+    Tensor *out = tensor_new_op(1, 1, req, OP_CROSS_ENTROPY, parents, 2, backward_cross_entropy);
+    float acc = 0.0f;
+
+    for (int r = 0; r < pred_probs->rows; r++) {
+        float row_loss = 0.0f;
+        for (int c = 0; c < pred_probs->cols; c++) {
+            int idx = r * pred_probs->cols + c;
+            float p = pred_probs->data[idx] > eps ? pred_probs->data[idx] : eps;
+            row_loss += -target_probs->data[idx] * logf(p);
+        }
+        acc += row_loss;
+    }
+    out->data[0] = acc / (float)pred_probs->rows;
     return out;
 }
 
