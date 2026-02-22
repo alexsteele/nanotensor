@@ -34,7 +34,10 @@ run: demo
 run-llm: llm
 	./llm
 
+run-shakespeare:
+	./scripts/run_shakespeare_llm.sh
+
 clean:
 	rm -f demo llm tensor_test $(OBJ) $(LIB) tensor_test_single.bin tensor_test_snapshot.bin
 
-.PHONY: all static test run run-llm clean
+.PHONY: all static test run run-llm run-shakespeare clean

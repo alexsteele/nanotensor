@@ -77,3 +77,16 @@ Build and run:
 make llm
 ./llm shakespeare.txt 3000 "To be" 64 300 0.2 0.9 96
 ```
+
+To automatically download and prepare a multi-play Shakespeare corpus from Gutenberg and
+run the demo:
+
+```bash
+make run-shakespeare
+```
+
+Or run the script directly with optional args:
+
+```bash
+./scripts/run_shakespeare_llm.sh [steps] [prompt] [batch] [gen_len] [lr] [temperature] [hidden]
+```
