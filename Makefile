@@ -4,6 +4,9 @@ AR ?= ar
 ARFLAGS ?= rcs
 
 MNIST_DIR ?= data/mnist
+PYTHON ?= .venv/bin/python3
+LOG ?= mnist_training_log.csv
+OUT ?= mnist_training_loss.png
 
 LIB := libtensor.a
 OBJ := tensor.o
@@ -45,6 +48,9 @@ run-mnist-conv: mnist-conv
 mnist-data:
 	./scripts/setup_mnist.sh $(MNIST_DIR)
 
+plot-loss:
+	$(PYTHON) scripts/plot_training_loss.py $(LOG) $(OUT)
+
 rebuild:
 	$(MAKE) clean
 	$(MAKE) all llm mnist-conv tensor_test
@@ -55,4 +61,4 @@ run-shakespeare:
 clean:
 	rm -f demo llm mnist_conv_demo tensor_test $(OBJ) $(LIB) tensor_test_single.bin tensor_test_snapshot.bin
 
-.PHONY: all static test run run-llm run-mnist-conv mnist-data rebuild run-shakespeare clean
+.PHONY: all static test run run-llm run-mnist-conv mnist-data plot-loss rebuild run-shakespeare clean

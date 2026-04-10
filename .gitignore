@@ -5,5 +5,10 @@ tensor_test
 tensor.o
 libtensor.a
 model_snapshot.bin
+.venv/
+.matplotlib/
+__pycache__/
+*.pyc
 
 data/
+*.csv

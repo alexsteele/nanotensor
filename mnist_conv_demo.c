@@ -1,5 +1,6 @@
 #include "tensor.h"
 
+#include <sys/time.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,9 +19,58 @@ typedef struct {
     unsigned char *labels;
 } MnistSet;
 
+/* Architecture:
+ * input [batch, 28x28]
+ * -> im2col patches [batch * 24 * 24, 25]
+ * -> conv projection [batch * 24 * 24, channels]
+ * -> relu
+ * -> classifier head [batch * 24 * 24, 10]
+ * -> mean pool over patches [batch, 10]
+ * -> logits; softmax is applied only for training loss/probabilities
+ */
+typedef struct {
+    int kh;
+    int kw;
+    int h;
+    int w;
+    int oh;
+    int ow;
+    int patches;
+    int patch_dim;
+    int channels;
+    int batch;
+    Tensor *Wc;
+    Tensor *bc;
+    Tensor *Wcls;
+    Tensor *bcls;
+    Tensor *pool;
+    Tensor *params[4];
+    float *xcol_buf;
+    Tensor *tmp_conv_lin;
+    Tensor *tmp_conv_bias;
+    Tensor *tmp_conv_act;
+    Tensor *tmp_patch_logits;
+    Tensor *tmp_patch_logits_bias;
+} MnistConvModel;
+
+static void mnist_model_init(MnistConvModel *model, int batch, int channels, unsigned int *seed);
+static void mnist_model_free(MnistConvModel *model);
+static float mnist_model_train_epoch(MnistConvModel *model, const MnistSet *train, float lr);
+static Tensor *mnist_model_forward(MnistConvModel *model, Tensor *xcol);
+static void mnist_model_clear_forward_cache(MnistConvModel *model);
+static float evaluate_accuracy(const MnistSet *ds, MnistConvModel *model);
+
 static void die(const char *msg) {
     fprintf(stderr, "%s\n", msg);
     exit(1);
+}
+
+static double now_seconds(void) {
+    struct timeval tv;
+    if (gettimeofday(&tv, NULL) != 0) {
+        die("gettimeofday failed");
+    }
+    return (double)tv.tv_sec + (double)tv.tv_usec / 1000000.0;
 }
 
 static uint32_t read_u32_be(FILE *f) {
@@ -143,6 +193,8 @@ static Tensor *build_patch_pool(int batch, int patches_per_image) {
     return pool;
 }
 
+/* Extract every sliding kh x kw patch into one row so the conv-like
+ * stage can be implemented as a matrix multiply over all patches. */
 static void im2col_batch(const float *images, int batch, int h, int w, int kh, int kw, float *out) {
     int oh = h - kh + 1;
     int ow = w - kw + 1;
@@ -165,73 +217,129 @@ static void im2col_batch(const float *images, int batch, int h, int w, int kh, i
     }
 }
 
-static Tensor *forward_logits(Tensor *x_col,
-                              Tensor *Wc,
-                              Tensor *bc,
-                              Tensor *Wcls,
-                              Tensor *bcls,
-                              Tensor *pool,
-                              Tensor **tmp_conv_lin,
-                              Tensor **tmp_conv_bias,
-                              Tensor **tmp_conv_act,
-                              Tensor **tmp_patch_logits,
-                              Tensor **tmp_patch_logits_bias) {
-    Tensor *conv_lin = tensor_matmul(x_col, Wc);
-    Tensor *conv_bias = tensor_add_bias(conv_lin, bc);
-    Tensor *conv_act = tensor_relu(conv_bias);
-    Tensor *patch_logits = tensor_matmul(conv_act, Wcls);
-    Tensor *patch_logits_bias = tensor_add_bias(patch_logits, bcls);
-    Tensor *logits = tensor_matmul(pool, patch_logits_bias);
+static void mnist_model_init(MnistConvModel *model, int batch, int channels, unsigned int *seed) {
+    if (!model) {
+        die("mnist_model_init: model is null");
+    }
 
-    *tmp_conv_lin = conv_lin;
-    *tmp_conv_bias = conv_bias;
-    *tmp_conv_act = conv_act;
-    *tmp_patch_logits = patch_logits;
-    *tmp_patch_logits_bias = patch_logits_bias;
+    memset(model, 0, sizeof(*model));
+    model->kh = 5;
+    model->kw = 5;
+    model->h = MNIST_ROWS;
+    model->w = MNIST_COLS;
+    model->oh = model->h - model->kh + 1;
+    model->ow = model->w - model->kw + 1;
+    model->patches = model->oh * model->ow;
+    model->patch_dim = model->kh * model->kw;
+    model->channels = channels;
+    model->batch = batch;
+
+    model->Wc = tensor_create(model->patch_dim, channels, 1);
+    model->bc = tensor_create(1, channels, 1);
+    model->Wcls = tensor_create(channels, N_CLASSES, 1);
+    model->bcls = tensor_create(1, N_CLASSES, 1);
+    model->pool = build_patch_pool(batch, model->patches);
+
+    tensor_fill_randn(model->Wc, 0.0f, 0.08f, seed);
+    tensor_fill_randn(model->Wcls, 0.0f, 0.08f, seed);
+    tensor_fill(model->bc, 0.0f);
+    tensor_fill(model->bcls, 0.0f);
+
+    model->params[0] = model->Wc;
+    model->params[1] = model->bc;
+    model->params[2] = model->Wcls;
+    model->params[3] = model->bcls;
+
+    model->xcol_buf = (float *)malloc(sizeof(float) * (size_t)batch * model->patches * model->patch_dim);
+    if (!model->xcol_buf) {
+        die("allocation failed for im2col buffer");
+    }
+}
+
+static void mnist_model_clear_forward_cache(MnistConvModel *model) {
+    if (!model) {
+        return;
+    }
+    tensor_free(model->tmp_conv_lin);
+    tensor_free(model->tmp_conv_bias);
+    tensor_free(model->tmp_conv_act);
+    tensor_free(model->tmp_patch_logits);
+    tensor_free(model->tmp_patch_logits_bias);
+    model->tmp_conv_lin = NULL;
+    model->tmp_conv_bias = NULL;
+    model->tmp_conv_act = NULL;
+    model->tmp_patch_logits = NULL;
+    model->tmp_patch_logits_bias = NULL;
+}
+
+static void mnist_model_free(MnistConvModel *model) {
+    if (!model) {
+        return;
+    }
+    mnist_model_clear_forward_cache(model);
+    free(model->xcol_buf);
+    tensor_free(model->Wc);
+    tensor_free(model->bc);
+    tensor_free(model->Wcls);
+    tensor_free(model->bcls);
+    tensor_free(model->pool);
+    memset(model, 0, sizeof(*model));
+}
+
+static Tensor *forward_logits(MnistConvModel *model, Tensor *x_col) {
+    Tensor *conv_lin = tensor_matmul(x_col, model->Wc);
+    Tensor *conv_bias = tensor_add_bias(conv_lin, model->bc);
+    Tensor *conv_act = tensor_relu(conv_bias);
+    Tensor *patch_logits = tensor_matmul(conv_act, model->Wcls);
+    Tensor *patch_logits_bias = tensor_add_bias(patch_logits, model->bcls);
+    Tensor *logits = tensor_matmul(model->pool, patch_logits_bias);
+
+    model->tmp_conv_lin = conv_lin;
+    model->tmp_conv_bias = conv_bias;
+    model->tmp_conv_act = conv_act;
+    model->tmp_patch_logits = patch_logits;
+    model->tmp_patch_logits_bias = patch_logits_bias;
     return logits;
 }
 
-static void print_architecture_summary(FILE *out, int kh, int kw, int channels, int patches_per_image) {
-    fprintf(out, "arch: input=28x28x1 im2col=%dx%d\n", kh, kw);
-    fprintf(out, "arch: patch_dim=%d patches=%d\n", kh * kw, patches_per_image);
-    fprintf(out, "arch: conv=matmul(%d->%d)+bias+relu\n", kh * kw, channels);
-    fprintf(out, "arch: head=matmul(%d->10)+bias\n", channels);
-    fprintf(out, "arch: pool=mean_over_patches loss=softmax_ce\n");
+static Tensor *mnist_model_forward(MnistConvModel *model, Tensor *xcol) {
+    return forward_logits(model, xcol);
+}
+
+static void print_architecture_summary(FILE *out,
+                                       const char *prefix,
+                                       int kh,
+                                       int kw,
+                                       int channels,
+                                       int patches_per_image) {
+    const char *p = prefix ? prefix : "";
+    fprintf(out, "%sarch: input=28x28x1 im2col=%dx%d\n", p, kh, kw);
+    fprintf(out, "%sarch: patch_dim=%d patches=%d\n", p, kh * kw, patches_per_image);
+    fprintf(out, "%sarch: conv=matmul(%d->%d)+bias+relu\n", p, kh * kw, channels);
+    fprintf(out, "%sarch: head=matmul(%d->10)+bias\n", p, channels);
+    fprintf(out, "%sarch: pool=mean_over_patches loss=softmax_ce\n", p);
 }
 
 static float evaluate_accuracy(const MnistSet *ds,
-                               int batch,
-                               int kh,
-                               int kw,
-                               Tensor *Wc,
-                               Tensor *bc,
-                               Tensor *Wcls,
-                               Tensor *bcls,
-                               Tensor *pool,
-                               float *xcol_buf) {
-    int h = ds->rows;
-    int w = ds->cols;
-    int oh = h - kh + 1;
-    int ow = w - kw + 1;
-    int patches = oh * ow;
-    int n_eval = (ds->n / batch) * batch;
+                               MnistConvModel *model) {
+    int n_eval = (ds->n / model->batch) * model->batch;
     int correct = 0;
 
-    for (int i = 0; i < n_eval; i += batch) {
+    for (int i = 0; i < n_eval; i += model->batch) {
         Tensor *xcol;
-        Tensor *conv_lin;
-        Tensor *conv_bias;
-        Tensor *conv_act;
-        Tensor *patch_logits;
-        Tensor *patch_logits_bias;
         Tensor *logits;
 
-        im2col_batch(ds->images + (size_t)i * MNIST_PIXELS, batch, h, w, kh, kw, xcol_buf);
-        xcol = tensor_from_array(batch * patches, kh * kw, xcol_buf, 0);
-        logits = forward_logits(
-            xcol, Wc, bc, Wcls, bcls, pool, &conv_lin, &conv_bias, &conv_act, &patch_logits, &patch_logits_bias);
+        im2col_batch(ds->images + (size_t)i * MNIST_PIXELS,
+                     model->batch,
+                     ds->rows,
+                     ds->cols,
+                     model->kh,
+                     model->kw,
+                     model->xcol_buf);
+        xcol = tensor_from_array(model->batch * model->patches, model->patch_dim, model->xcol_buf, 0);
+        logits = mnist_model_forward(model, xcol);
 
-        for (int b = 0; b < batch; b++) {
+        for (int b = 0; b < model->batch; b++) {
             int pred = argmax_row(logits->data + (size_t)b * N_CLASSES, N_CLASSES);
             if (pred == (int)ds->labels[i + b]) {
                 correct++;
@@ -239,18 +347,57 @@ static float evaluate_accuracy(const MnistSet *ds,
         }
 
         tensor_free(xcol);
-        tensor_free(conv_lin);
-        tensor_free(conv_bias);
-        tensor_free(conv_act);
-        tensor_free(patch_logits);
-        tensor_free(patch_logits_bias);
         tensor_free(logits);
+        mnist_model_clear_forward_cache(model);
     }
 
     if (n_eval == 0) {
         return 0.0f;
     }
     return (float)correct / (float)n_eval;
+}
+
+static float mnist_model_train_epoch(MnistConvModel *model, const MnistSet *train, float lr) {
+    int n_train = (train->n / model->batch) * model->batch;
+    float loss_sum = 0.0f;
+    int loss_count = 0;
+
+    for (int i = 0; i < n_train; i += model->batch) {
+        Tensor *xcol;
+        Tensor *y;
+        Tensor *logits;
+        Tensor *probs;
+        Tensor *loss;
+
+        im2col_batch(train->images + (size_t)i * MNIST_PIXELS,
+                     model->batch,
+                     train->rows,
+                     train->cols,
+                     model->kh,
+                     model->kw,
+                     model->xcol_buf);
+        xcol = tensor_from_array(model->batch * model->patches, model->patch_dim, model->xcol_buf, 0);
+        y = make_one_hot_batch(train->labels + i, model->batch);
+
+        logits = mnist_model_forward(model, xcol);
+        probs = tensor_softmax(logits);
+        loss = tensor_cross_entropy(probs, y);
+
+        tensor_backward(loss);
+        tensor_sgd_step(model->params, 4, lr);
+
+        loss_sum += loss->data[0];
+        loss_count++;
+
+        tensor_free(xcol);
+        tensor_free(y);
+        tensor_free(logits);
+        tensor_free(probs);
+        tensor_free(loss);
+        mnist_model_clear_forward_cache(model);
+    }
+
+    return loss_count > 0 ? loss_sum / (float)loss_count : 0.0f;
 }
 
 int main(int argc, char **argv) {
@@ -266,25 +413,11 @@ int main(int argc, char **argv) {
     int max_test = argc > 10 ? atoi(argv[10]) : 2000;
     const char *log_path = argc > 11 ? argv[11] : "mnist_training_log.csv";
 
-    const int kh = 5;
-    const int kw = 5;
-    const int h = MNIST_ROWS;
-    const int w = MNIST_COLS;
-    const int oh = h - kh + 1;
-    const int ow = w - kw + 1;
-    const int patches = oh * ow;
-    const int patch_dim = kh * kw;
     unsigned int seed = 1337U;
 
     MnistSet train;
     MnistSet test;
-    Tensor *Wc;
-    Tensor *bc;
-    Tensor *Wcls;
-    Tensor *bcls;
-    Tensor *pool;
-    Tensor *params[4];
-    float *xcol_buf;
+    MnistConvModel model;
     FILE *log_file;
 
     if (batch <= 0 || epochs <= 0 || channels <= 0) {
@@ -298,33 +431,13 @@ int main(int argc, char **argv) {
         die("dataset too small for chosen batch size");
     }
 
-    Wc = tensor_create(patch_dim, channels, 1);
-    bc = tensor_create(1, channels, 1);
-    Wcls = tensor_create(channels, N_CLASSES, 1);
-    bcls = tensor_create(1, N_CLASSES, 1);
-    pool = build_patch_pool(batch, patches);
-
-    tensor_fill_randn(Wc, 0.0f, 0.08f, &seed);
-    tensor_fill_randn(Wcls, 0.0f, 0.08f, &seed);
-    tensor_fill(bc, 0.0f);
-    tensor_fill(bcls, 0.0f);
-
-    params[0] = Wc;
-    params[1] = bc;
-    params[2] = Wcls;
-    params[3] = bcls;
-
-    xcol_buf = (float *)malloc(sizeof(float) * (size_t)batch * patches * patch_dim);
-    if (!xcol_buf) {
-        die("allocation failed for im2col buffer");
-    }
+    mnist_model_init(&model, batch, channels, &seed);
 
     log_file = fopen(log_path, "w");
     if (!log_file) {
         die("failed to open log file");
     }
-    fprintf(log_file, "# ");
-    print_architecture_summary(log_file, kh, kw, channels, patches);
+    print_architecture_summary(log_file, "# ", model.kh, model.kw, model.channels, model.patches);
     fprintf(log_file, "# train=%d test=%d batch=%d epochs=%d lr=%.4f channels=%d\n",
             train.n, test.n, batch, epochs, lr, channels);
     fprintf(log_file, "epoch,train_loss,train_acc,train_error,test_acc,test_error\n");
@@ -332,75 +445,32 @@ int main(int argc, char **argv) {
     printf("MNIST conv-matmul demo\n");
     printf("train=%d test=%d batch=%d epochs=%d lr=%.4f channels=%d\n",
            train.n, test.n, batch, epochs, lr, channels);
-    print_architecture_summary(stdout, kh, kw, channels, patches);
+    print_architecture_summary(stdout, NULL, model.kh, model.kw, model.channels, model.patches);
     printf("logging metrics to %s\n", log_path);
 
+    {
+        double start_time = now_seconds();
+
     for (int epoch = 1; epoch <= epochs; epoch++) {
-        int n_train = (train.n / batch) * batch;
-        float loss_sum = 0.0f;
-        int loss_count = 0;
-
-        for (int i = 0; i < n_train; i += batch) {
-            Tensor *xcol;
-            Tensor *y;
-            Tensor *conv_lin;
-            Tensor *conv_bias;
-            Tensor *conv_act;
-            Tensor *patch_logits;
-            Tensor *patch_logits_bias;
-            Tensor *logits;
-            Tensor *probs;
-            Tensor *loss;
-
-            im2col_batch(train.images + (size_t)i * MNIST_PIXELS, batch, h, w, kh, kw, xcol_buf);
-            xcol = tensor_from_array(batch * patches, patch_dim, xcol_buf, 0);
-            y = make_one_hot_batch(train.labels + i, batch);
-
-            logits = forward_logits(
-                xcol, Wc, bc, Wcls, bcls, pool, &conv_lin, &conv_bias, &conv_act, &patch_logits, &patch_logits_bias);
-            probs = tensor_softmax(logits);
-            loss = tensor_cross_entropy(probs, y);
-
-            tensor_backward(loss);
-            tensor_sgd_step(params, 4, lr);
-
-            loss_sum += loss->data[0];
-            loss_count++;
-
-            tensor_free(xcol);
-            tensor_free(y);
-            tensor_free(conv_lin);
-            tensor_free(conv_bias);
-            tensor_free(conv_act);
-            tensor_free(patch_logits);
-            tensor_free(patch_logits_bias);
-            tensor_free(logits);
-            tensor_free(probs);
-            tensor_free(loss);
-        }
-
         {
-            float train_acc = evaluate_accuracy(&train, batch, kh, kw, Wc, bc, Wcls, bcls, pool, xcol_buf);
-            float test_acc = evaluate_accuracy(&test, batch, kh, kw, Wc, bc, Wcls, bcls, pool, xcol_buf);
-            float avg_loss = loss_count > 0 ? loss_sum / (float)loss_count : 0.0f;
+            float avg_loss = mnist_model_train_epoch(&model, &train, lr);
+            float train_acc = evaluate_accuracy(&train, &model);
+            float test_acc = evaluate_accuracy(&test, &model);
             float train_error = 1.0f - train_acc;
             float test_error = 1.0f - test_acc;
+            double elapsed = now_seconds() - start_time;
 
-            printf("epoch %d/%d loss %.4f train_acc %.3f test_acc %.3f\n",
-                   epoch, epochs, avg_loss, train_acc, test_acc);
+            printf("epoch %d/%d loss %.4f train_acc %.3f test_acc %.3f elapsed %.2fs\n",
+                   epoch, epochs, avg_loss, train_acc, test_acc, elapsed);
             fprintf(log_file, "%d,%.6f,%.6f,%.6f,%.6f,%.6f\n",
                     epoch, avg_loss, train_acc, train_error, test_acc, test_error);
             fflush(log_file);
         }
     }
+    }
 
     fclose(log_file);
-    free(xcol_buf);
-    tensor_free(Wc);
-    tensor_free(bc);
-    tensor_free(Wcls);
-    tensor_free(bcls);
-    tensor_free(pool);
+    mnist_model_free(&model);
     free_mnist(&train);
     free_mnist(&test);
 
