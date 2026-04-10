@@ -191,6 +191,14 @@ static Tensor *forward_logits(Tensor *x_col,
     return logits;
 }
 
+static void print_architecture_summary(FILE *out, int kh, int kw, int channels, int patches_per_image) {
+    fprintf(out, "arch: input=28x28x1 im2col=%dx%d\n", kh, kw);
+    fprintf(out, "arch: patch_dim=%d patches=%d\n", kh * kw, patches_per_image);
+    fprintf(out, "arch: conv=matmul(%d->%d)+bias+relu\n", kh * kw, channels);
+    fprintf(out, "arch: head=matmul(%d->10)+bias\n", channels);
+    fprintf(out, "arch: pool=mean_over_patches loss=softmax_ce\n");
+}
+
 static float evaluate_accuracy(const MnistSet *ds,
                                int batch,
                                int kh,
@@ -315,11 +323,16 @@ int main(int argc, char **argv) {
     if (!log_file) {
         die("failed to open log file");
     }
+    fprintf(log_file, "# ");
+    print_architecture_summary(log_file, kh, kw, channels, patches);
+    fprintf(log_file, "# train=%d test=%d batch=%d epochs=%d lr=%.4f channels=%d\n",
+            train.n, test.n, batch, epochs, lr, channels);
     fprintf(log_file, "epoch,train_loss,train_acc,train_error,test_acc,test_error\n");
 
     printf("MNIST conv-matmul demo\n");
     printf("train=%d test=%d batch=%d epochs=%d lr=%.4f channels=%d\n",
            train.n, test.n, batch, epochs, lr, channels);
+    print_architecture_summary(stdout, kh, kw, channels, patches);
     printf("logging metrics to %s\n", log_path);
 
     for (int epoch = 1; epoch <= epochs; epoch++) {
