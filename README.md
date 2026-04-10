@@ -10,7 +10,8 @@ This project was developed with ChatGPT Codex.
 - Autograd, SGD
 - Serialization
 
-Our goal is to support some common model types: multi-layer neural nets, mnist convnets, bigram language models.
+Our goal is to support some common model types: multi-layer neural nets, mnist convnets, bigram
+language models.
 
 ## Build
 
@@ -72,8 +73,8 @@ cc -O2 -std=c11 -Wall -Wextra -pedantic your_program.c libtensor.a -lm -o your_p
 
 ## LLM Demo
 
-`llm.c` is a minimal character-level language model demo. It trains a small 2-layer MLP
-to predict the next character from a text corpus and then generates text from a prompt.
+`llm.c` is a minimal character-level language model demo. It trains a small 2-layer MLP to predict
+the next character from a text corpus and then generates text from a prompt.
 
 Build and run:
 
@@ -82,8 +83,8 @@ make llm
 ./llm shakespeare.txt 3000 "To be" 64 300 0.2 0.9 96
 ```
 
-To automatically download and prepare a multi-play Shakespeare corpus from Gutenberg and
-run the demo:
+To automatically download and prepare a multi-play Shakespeare corpus from Gutenberg and run the
+demo:
 
 ```bash
 make run-shakespeare
@@ -127,12 +128,12 @@ Run (expects raw IDX files, not `.gz`):
   --log=mnist_training_log.csv
 ```
 
-Named args:
-`--epochs=N --batch=N --channels=N --lr=FLOAT --momentum=FLOAT --log=PATH`
+Named args: `--epochs=N --batch=N --channels=N --lr=FLOAT --momentum=FLOAT --log=PATH`
 
 Dataset paths and the current train/test subset defaults are fixed in the demo for now.
 
-The demo writes one CSV row per epoch with `train_loss`, `train_acc`, `train_error`, `test_acc`, and `test_error`.
+The demo writes one CSV row per epoch with `train_loss`, `train_acc`, `train_error`, `test_acc`, and
+`test_error`.
 
 Generate a simple training-loss chart from a metrics CSV:
 
