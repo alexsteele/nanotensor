@@ -124,7 +124,7 @@ static void parse_args(int argc, char **argv, MnistOptions *opt) {
     opt->channels = 8;
     opt->lr = 0.03f;
     opt->momentum = 0.9f;
-    opt->log_path = "mnist_training_log.csv";
+    opt->log_path = "out/mnist_training_log.csv";
 
     for (int i = 1; i < argc; i++) {
         const char *arg = argv[i];

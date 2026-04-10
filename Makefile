@@ -5,8 +5,8 @@ ARFLAGS ?= rcs
 
 MNIST_DIR ?= data/mnist
 PYTHON ?= .venv/bin/python3
-LOG ?= mnist_training_log.csv
-OUT ?= mnist_training_loss.png
+LOG ?= out/mnist_training_log.csv
+OUT ?= out/mnist_training_loss.png
 
 LIB := libtensor.a
 OBJ := tensor.o

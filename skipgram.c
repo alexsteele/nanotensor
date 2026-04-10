@@ -83,8 +83,8 @@ static void parse_args(int argc, char **argv, SkipGramOptions *opt) {
     opt->lr = 0.05f;
     opt->embed = 32;
     opt->vocab_limit = DEFAULT_VOCAB;
-    snprintf(opt->snapshot_path, sizeof(opt->snapshot_path), "%s", "skipgram_snapshot.bin");
-    snprintf(opt->vocab_out_path, sizeof(opt->vocab_out_path), "%s", "skipgram_vocab.txt");
+    snprintf(opt->snapshot_path, sizeof(opt->snapshot_path), "%s", "out/skipgram_snapshot.bin");
+    snprintf(opt->vocab_out_path, sizeof(opt->vocab_out_path), "%s", "out/skipgram_vocab.txt");
 
     for (int i = 1; i < argc; i++) {
         const char *arg = argv[i];

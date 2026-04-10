@@ -107,12 +107,12 @@ int main(void) {
     tensor_free(pred);
     tensor_free(final_loss);
 
-    if (tensor_snapshot_save(params, n_params, "model_snapshot.bin") != 0) {
+    if (tensor_snapshot_save(params, n_params, "out/model_snapshot.bin") != 0) {
         fprintf(stderr, "failed to save snapshot\n");
         return 1;
     }
     W1->data[0] += 5.0f;
-    if (tensor_snapshot_load(params, n_params, "model_snapshot.bin") != 0) {
+    if (tensor_snapshot_load(params, n_params, "out/model_snapshot.bin") != 0) {
         fprintf(stderr, "failed to load snapshot\n");
         return 1;
     }

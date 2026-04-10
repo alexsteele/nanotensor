@@ -116,8 +116,8 @@ make skipgram
   --lr=0.05 \
   --embed=32 \
   --vocab=800 \
-  --snapshot=skipgram_snapshot.bin \
-  --vocab-out=skipgram_vocab.txt
+  --snapshot=out/skipgram_snapshot.bin \
+  --vocab-out=out/skipgram_vocab.txt
 
 ...
 --- nearest neighbors ---
@@ -128,8 +128,8 @@ death: d(0.95) very(0.95) so(0.94) had(0.94) must(0.94)
 man: time(0.96) had(0.96) s(0.95) hamlet(0.95) like(0.95)
 woman: now(0.93) were(0.93) they(0.92) at(0.92) which(0.91)
 
-saved snapshot: skipgram_snapshot.bin
-saved vocab: skipgram_vocab.txt
+saved snapshot: out/skipgram_snapshot.bin
+saved vocab: out/skipgram_vocab.txt
 ```
 
 ## MNIST Conv Demo (MVP)
@@ -161,7 +161,7 @@ Run (expects raw IDX files, not `.gz`):
   --channels=8 \
   --lr=0.03 \
   --momentum=0.9 \
-  --log=mnist_training_log.csv
+  --log=out/mnist_training_log.csv
 ```
 
 Named args: `--epochs=N --batch=N --channels=N --lr=FLOAT --momentum=FLOAT --log=PATH`
@@ -177,11 +177,11 @@ Generate a simple training-loss chart from a metrics CSV:
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
-python3 scripts/plot_training_loss.py mnist_training_log.csv
+python3 scripts/plot_training_loss.py out/mnist_training_log.csv
 ```
 
 Or via `make`:
 
 ```bash
-make plot-loss LOG=mnist_training_log.csv OUT=mnist_training_loss.png
+make plot-loss LOG=out/mnist_training_log.csv OUT=out/mnist_training_loss.png
 ```
