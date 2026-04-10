@@ -6,9 +6,11 @@ This project was developed with ChatGPT Codex.
 
 ## Features
 
-- Core tensor ops
-- Autograd
+- 1-2D tensors
+- Autograd, SGD
 - Serialization
+
+Our goal is to support some common model types: multi-layer neural nets, mnist convnets, bigram language models.
 
 ## Build
 
@@ -96,6 +98,7 @@ Or run the script directly with optional args:
 ## MNIST Conv Demo (MVP)
 
 `mnist_conv_demo.c` is a minimal conv-like classifier using MNIST and existing 2D tensor ops:
+
 - `im2col` patch extraction in C
 - `matmul + bias + relu` as the convolution stage
 - patch logits pooled per image, then softmax + cross entropy
@@ -127,3 +130,18 @@ Args:
 `[train_images] [train_labels] [test_images] [test_labels] [epochs] [batch] [lr] [channels] [max_train] [max_test] [log_csv]`
 
 The demo writes one CSV row per epoch with `train_loss`, `train_acc`, `train_error`, `test_acc`, and `test_error`.
+
+Generate a simple training-loss chart from a metrics CSV:
+
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+python3 scripts/plot_training_loss.py mnist_training_log.csv
+```
+
+Or via `make`:
+
+```bash
+make plot-loss LOG=mnist_training_log.csv OUT=mnist_training_loss.png
+```
