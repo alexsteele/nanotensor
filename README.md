@@ -96,6 +96,42 @@ Or run the script directly with optional args:
 ./scripts/run_shakespeare_llm.sh [steps] [prompt] [batch] [gen_len] [lr] [temperature] [hidden]
 ```
 
+## SkipGram Demo
+
+`skipgram.c` is a minimal word2vec-style skip-gram word embedding demo:
+
+- tokenizes a text corpus into lowercase words
+- trains a center-word to context-word predictor with a softmax loss
+- prints nearest-neighbor words from the learned embedding table
+
+Build and run:
+
+```bash
+make skipgram
+./skipgram \
+  --text=data/shakespeare/shakespeare_gutenberg.txt \
+  --steps=2000 \
+  --batch=64 \
+  --window=2 \
+  --lr=0.05 \
+  --embed=32 \
+  --vocab=800 \
+  --snapshot=skipgram_snapshot.bin \
+  --vocab-out=skipgram_vocab.txt
+
+...
+--- nearest neighbors ---
+king: she(0.97) by(0.97) upon(0.97) now(0.96) give(0.96)
+queen: may(0.85) she(0.84) mine(0.84) these(0.83) than(0.83)
+love: thee(0.97) may(0.97) from(0.97) this(0.97) go(0.97)
+death: d(0.95) very(0.95) so(0.94) had(0.94) must(0.94)
+man: time(0.96) had(0.96) s(0.95) hamlet(0.95) like(0.95)
+woman: now(0.93) were(0.93) they(0.92) at(0.92) which(0.91)
+
+saved snapshot: skipgram_snapshot.bin
+saved vocab: skipgram_vocab.txt
+```
+
 ## MNIST Conv Demo (MVP)
 
 `mnist.c` is a minimal conv-like classifier using MNIST and existing 2D tensor ops:

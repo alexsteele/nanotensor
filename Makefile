@@ -27,6 +27,9 @@ demo: demo.c tensor.h $(LIB)
 llm: llm.c tensor.h $(LIB)
 	$(CC) $(CFLAGS) llm.c $(LIB) -lm -o llm
 
+skipgram: skipgram.c tensor.h $(LIB)
+	$(CC) $(CFLAGS) skipgram.c $(LIB) -lm -o skipgram
+
 mnist-conv: mnist.c tensor.h $(LIB)
 	$(CC) $(CFLAGS) mnist.c $(LIB) -lm -o mnist_conv_demo
 
@@ -42,6 +45,9 @@ run: demo
 run-llm: llm
 	./llm
 
+run-skipgram: skipgram
+	./skipgram
+
 run-mnist-conv: mnist-conv
 	./mnist_conv_demo
 
@@ -53,12 +59,12 @@ plot-loss:
 
 rebuild:
 	$(MAKE) clean
-	$(MAKE) all llm mnist-conv tensor_test
+	$(MAKE) all llm skipgram mnist-conv tensor_test
 
 run-shakespeare:
 	./scripts/run_shakespeare_llm.sh
 
 clean:
-	rm -f demo llm mnist_conv_demo tensor_test $(OBJ) $(LIB) tensor_test_single.bin tensor_test_snapshot.bin
+	rm -f demo llm skipgram mnist_conv_demo tensor_test $(OBJ) $(LIB) tensor_test_single.bin tensor_test_snapshot.bin
 
-.PHONY: all static test run run-llm run-mnist-conv mnist-data plot-loss rebuild run-shakespeare clean
+.PHONY: all static test run run-llm run-skipgram run-mnist-conv mnist-data plot-loss rebuild run-shakespeare clean
