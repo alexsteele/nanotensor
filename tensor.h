@@ -75,5 +75,6 @@ Tensor *tensor_forward(Tensor *output);
 void tensor_backward(Tensor *loss);
 
 void tensor_sgd_step(Tensor **params, size_t n_params, float lr);
+void tensor_sgd_momentum_step(Tensor **params, Tensor **velocity, size_t n_params, float lr, float momentum);
 
 #endif

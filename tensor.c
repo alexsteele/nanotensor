@@ -1427,3 +1427,26 @@ void tensor_sgd_step(Tensor **params, size_t n_params, float lr) {
         }
     }
 }
+
+void tensor_sgd_momentum_step(Tensor **params, Tensor **velocity, size_t n_params, float lr, float momentum) {
+    for (size_t p = 0; p < n_params; p++) {
+        Tensor *t = params[p];
+        Tensor *v;
+        int n;
+        if (!t->requires_grad || !t->grad) {
+            continue;
+        }
+        if (!velocity || !velocity[p]) {
+            die("tensor_sgd_momentum_step: missing velocity tensor");
+        }
+        v = velocity[p];
+        if (v->rows != t->rows || v->cols != t->cols) {
+            die("tensor_sgd_momentum_step: velocity shape mismatch");
+        }
+        n = tensor_numel(t);
+        for (int i = 0; i < n; i++) {
+            v->data[i] = momentum * v->data[i] - lr * t->grad[i];
+            t->data[i] += v->data[i];
+        }
+    }
+}

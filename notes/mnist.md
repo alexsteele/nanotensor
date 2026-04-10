@@ -38,3 +38,32 @@ The current demo exposes a few simple CLI knobs:
 - `--lr=FLOAT`: learning rate controls step size; too small learns slowly, too large can bounce around or diverge
 - `--batch=N`: batch size controls how many images contribute to each SGD update; smaller batches give noisier but more frequent updates
 - `--channels=N`: channel count is the width of the patch feature extractor; larger values usually improve accuracy up to the point where pooling becomes the bottleneck
+- `--momentum=FLOAT`: momentum smooths SGD updates with a velocity term; values like `0.9` often converge faster than plain SGD
+
+The demo now shuffles the training order each epoch before batching. That is usually a better default than reusing the same fixed sample order every epoch.
+
+# Experiment Log
+
+We should track one short entry per meaningful training version keyed by git commit.
+
+Suggested fields:
+- commit
+- config
+- final train loss
+- final eval loss
+- final test acc / test error
+- brief notes
+
+### `badaa98` plain SGD baseline
+
+- config: `epochs=3 batch=32 channels=8 lr=0.03 momentum=0.0`
+- final train loss: `2.298944`
+- final test acc / error: `0.115927 / 0.884073`
+- notes: shuffled training order enabled, but plain SGD barely moved off chance-level accuracy on this setup
+
+### `badaa98` shuffled + momentum SGD
+
+- config: `epochs=3 batch=32 channels=8 lr=0.03 momentum=0.9`
+- final train loss: `2.119055`
+- final test acc / error: `0.212702 / 0.787298`
+- notes: same architecture and data subset as baseline; momentum produced a clear early improvement in both loss and test accuracy
