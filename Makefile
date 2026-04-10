@@ -3,6 +3,8 @@ CFLAGS ?= -O2 -std=c11 -Wall -Wextra -pedantic
 AR ?= ar
 ARFLAGS ?= rcs
 
+MNIST_DIR ?= data/mnist
+
 LIB := libtensor.a
 OBJ := tensor.o
 
@@ -22,6 +24,9 @@ demo: main.c tensor.h $(LIB)
 llm: llm.c tensor.h $(LIB)
 	$(CC) $(CFLAGS) llm.c $(LIB) -lm -o llm
 
+mnist-conv: mnist_conv_demo.c tensor.h $(LIB)
+	$(CC) $(CFLAGS) mnist_conv_demo.c $(LIB) -lm -o mnist_conv_demo
+
 tensor_test: tensor_test.c tensor.h $(LIB)
 	$(CC) $(CFLAGS) tensor_test.c $(LIB) -lm -o tensor_test
 
@@ -34,10 +39,20 @@ run: demo
 run-llm: llm
 	./llm
 
+run-mnist-conv: mnist-conv
+	./mnist_conv_demo
+
+mnist-data:
+	./scripts/setup_mnist.sh $(MNIST_DIR)
+
+rebuild:
+	$(MAKE) clean
+	$(MAKE) all llm mnist-conv tensor_test
+
 run-shakespeare:
 	./scripts/run_shakespeare_llm.sh
 
 clean:
-	rm -f demo llm tensor_test $(OBJ) $(LIB) tensor_test_single.bin tensor_test_snapshot.bin
+	rm -f demo llm mnist_conv_demo tensor_test $(OBJ) $(LIB) tensor_test_single.bin tensor_test_snapshot.bin
 
-.PHONY: all static test run run-llm run-shakespeare clean
+.PHONY: all static test run run-llm run-mnist-conv mnist-data rebuild run-shakespeare clean

@@ -17,6 +17,8 @@ make static      # builds libtensor.a
 make             # builds demo linked against libtensor.a
 make test        # builds and runs unit tests
 make run         # runs the demo training program
+make rebuild     # forces a clean rebuild of all binaries for this machine
+make mnist-data  # downloads and unpacks raw MNIST IDX files into data/mnist
 ```
 
 ## Minimal Example
@@ -90,3 +92,38 @@ Or run the script directly with optional args:
 ```bash
 ./scripts/run_shakespeare_llm.sh [steps] [prompt] [batch] [gen_len] [lr] [temperature] [hidden]
 ```
+
+## MNIST Conv Demo (MVP)
+
+`mnist_conv_demo.c` is a minimal conv-like classifier using MNIST and existing 2D tensor ops:
+- `im2col` patch extraction in C
+- `matmul + bias + relu` as the convolution stage
+- patch logits pooled per image, then softmax + cross entropy
+
+Build:
+
+```bash
+make mnist-conv
+```
+
+Download the raw IDX dataset files:
+
+```bash
+make mnist-data
+```
+
+Run (expects raw IDX files, not `.gz`):
+
+```bash
+./mnist_conv_demo \
+  data/mnist/train-images-idx3-ubyte \
+  data/mnist/train-labels-idx1-ubyte \
+  data/mnist/t10k-images-idx3-ubyte \
+  data/mnist/t10k-labels-idx1-ubyte \
+  5 32 0.03 8 10000 2000 mnist_training_log.csv
+```
+
+Args:
+`[train_images] [train_labels] [test_images] [test_labels] [epochs] [batch] [lr] [channels] [max_train] [max_test] [log_csv]`
+
+The demo writes one CSV row per epoch with `train_loss`, `train_acc`, `train_error`, `test_acc`, and `test_error`.
