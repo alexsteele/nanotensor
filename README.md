@@ -119,15 +119,17 @@ Run (expects raw IDX files, not `.gz`):
 
 ```bash
 ./mnist_conv_demo \
-  data/mnist/train-images-idx3-ubyte \
-  data/mnist/train-labels-idx1-ubyte \
-  data/mnist/t10k-images-idx3-ubyte \
-  data/mnist/t10k-labels-idx1-ubyte \
-  5 32 0.03 8 10000 2000 mnist_training_log.csv
+  --epochs=5 \
+  --batch=32 \
+  --channels=8 \
+  --lr=0.03 \
+  --log=mnist_training_log.csv
 ```
 
-Args:
-`[train_images] [train_labels] [test_images] [test_labels] [epochs] [batch] [lr] [channels] [max_train] [max_test] [log_csv]`
+Named args:
+`--epochs=N --batch=N --channels=N --lr=FLOAT --log=PATH`
+
+Dataset paths and the current train/test subset defaults are fixed in the demo for now.
 
 The demo writes one CSV row per epoch with `train_loss`, `train_acc`, `train_error`, `test_acc`, and `test_error`.
 

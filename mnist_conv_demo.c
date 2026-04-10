@@ -60,6 +60,14 @@ static Tensor *mnist_model_forward(MnistConvModel *model, Tensor *xcol);
 static void mnist_model_clear_forward_cache(MnistConvModel *model);
 static float evaluate_accuracy(const MnistSet *ds, MnistConvModel *model);
 
+typedef struct {
+    int epochs;
+    int batch;
+    int channels;
+    float lr;
+    const char *log_path;
+} MnistOptions;
+
 static void die(const char *msg) {
     fprintf(stderr, "%s\n", msg);
     exit(1);
@@ -71,6 +79,46 @@ static double now_seconds(void) {
         die("gettimeofday failed");
     }
     return (double)tv.tv_sec + (double)tv.tv_usec / 1000000.0;
+}
+
+static void print_usage(const char *prog) {
+    printf("usage: %s [options]\n", prog);
+    printf("  --epochs=N\n");
+    printf("  --batch=N\n");
+    printf("  --channels=N\n");
+    printf("  --lr=FLOAT\n");
+    printf("  --log=PATH\n");
+}
+
+static void parse_args(int argc, char **argv, MnistOptions *opt) {
+    char log_path_buf[1024];
+
+    opt->epochs = 5;
+    opt->batch = 32;
+    opt->channels = 8;
+    opt->lr = 0.03f;
+    opt->log_path = "mnist_training_log.csv";
+
+    for (int i = 1; i < argc; i++) {
+        const char *arg = argv[i];
+
+        if (strcmp(arg, "--help") == 0 || strcmp(arg, "-h") == 0) {
+            print_usage(argv[0]);
+            exit(0);
+        } else if (sscanf(arg, "--epochs=%d", &opt->epochs) == 1) {
+            continue;
+        } else if (sscanf(arg, "--batch=%d", &opt->batch) == 1) {
+            continue;
+        } else if (sscanf(arg, "--channels=%d", &opt->channels) == 1) {
+            continue;
+        } else if (sscanf(arg, "--lr=%f", &opt->lr) == 1) {
+            continue;
+        } else if (sscanf(arg, "--log=%1023s", log_path_buf) == 1) {
+            opt->log_path = argv[i] + 6;
+        } else {
+            die("unknown option");
+        }
+    }
 }
 
 static uint32_t read_u32_be(FILE *f) {
@@ -401,59 +449,55 @@ static float mnist_model_train_epoch(MnistConvModel *model, const MnistSet *trai
 }
 
 int main(int argc, char **argv) {
-    const char *train_images = argc > 1 ? argv[1] : "data/mnist/train-images-idx3-ubyte";
-    const char *train_labels = argc > 2 ? argv[2] : "data/mnist/train-labels-idx1-ubyte";
-    const char *test_images = argc > 3 ? argv[3] : "data/mnist/t10k-images-idx3-ubyte";
-    const char *test_labels = argc > 4 ? argv[4] : "data/mnist/t10k-labels-idx1-ubyte";
-    int epochs = argc > 5 ? atoi(argv[5]) : 5;
-    int batch = argc > 6 ? atoi(argv[6]) : 32;
-    float lr = argc > 7 ? (float)atof(argv[7]) : 0.03f;
-    int channels = argc > 8 ? atoi(argv[8]) : 8;
-    int max_train = argc > 9 ? atoi(argv[9]) : 10000;
-    int max_test = argc > 10 ? atoi(argv[10]) : 2000;
-    const char *log_path = argc > 11 ? argv[11] : "mnist_training_log.csv";
-
+    MnistOptions opt;
     unsigned int seed = 1337U;
-
+    const char *train_images = "data/mnist/train-images-idx3-ubyte";
+    const char *train_labels = "data/mnist/train-labels-idx1-ubyte";
+    const char *test_images = "data/mnist/t10k-images-idx3-ubyte";
+    const char *test_labels = "data/mnist/t10k-labels-idx1-ubyte";
+    const int max_train = 10000;
+    const int max_test = 2000;
     MnistSet train;
     MnistSet test;
     MnistConvModel model;
     FILE *log_file;
 
-    if (batch <= 0 || epochs <= 0 || channels <= 0) {
-        die("epochs, batch, channels must be > 0");
+    parse_args(argc, argv, &opt);
+
+    if (opt.epochs <= 0 || opt.batch <= 0 || opt.channels <= 0) {
+        die("epochs, batch, and channels must be > 0");
     }
 
     train = load_mnist(train_images, train_labels, max_train);
     test = load_mnist(test_images, test_labels, max_test);
 
-    if (train.n < batch || test.n < batch) {
+    if (train.n < opt.batch || test.n < opt.batch) {
         die("dataset too small for chosen batch size");
     }
 
-    mnist_model_init(&model, batch, channels, &seed);
+    mnist_model_init(&model, opt.batch, opt.channels, &seed);
 
-    log_file = fopen(log_path, "w");
+    log_file = fopen(opt.log_path, "w");
     if (!log_file) {
         die("failed to open log file");
     }
     print_architecture_summary(log_file, "# ", model.kh, model.kw, model.channels, model.patches);
     fprintf(log_file, "# train=%d test=%d batch=%d epochs=%d lr=%.4f channels=%d\n",
-            train.n, test.n, batch, epochs, lr, channels);
+            train.n, test.n, opt.batch, opt.epochs, opt.lr, opt.channels);
     fprintf(log_file, "epoch,train_loss,train_acc,train_error,test_acc,test_error\n");
 
     printf("MNIST conv-matmul demo\n");
     printf("train=%d test=%d batch=%d epochs=%d lr=%.4f channels=%d\n",
-           train.n, test.n, batch, epochs, lr, channels);
+           train.n, test.n, opt.batch, opt.epochs, opt.lr, opt.channels);
     print_architecture_summary(stdout, NULL, model.kh, model.kw, model.channels, model.patches);
-    printf("logging metrics to %s\n", log_path);
+    printf("logging metrics to %s\n", opt.log_path);
 
     {
         double start_time = now_seconds();
 
-    for (int epoch = 1; epoch <= epochs; epoch++) {
+    for (int epoch = 1; epoch <= opt.epochs; epoch++) {
         {
-            float avg_loss = mnist_model_train_epoch(&model, &train, lr);
+            float avg_loss = mnist_model_train_epoch(&model, &train, opt.lr);
             float train_acc = evaluate_accuracy(&train, &model);
             float test_acc = evaluate_accuracy(&test, &model);
             float train_error = 1.0f - train_acc;
@@ -461,7 +505,7 @@ int main(int argc, char **argv) {
             double elapsed = now_seconds() - start_time;
 
             printf("epoch %d/%d loss %.4f train_acc %.3f test_acc %.3f elapsed %.2fs\n",
-                   epoch, epochs, avg_loss, train_acc, test_acc, elapsed);
+                   epoch, opt.epochs, avg_loss, train_acc, test_acc, elapsed);
             fprintf(log_file, "%d,%.6f,%.6f,%.6f,%.6f,%.6f\n",
                     epoch, avg_loss, train_acc, train_error, test_acc, test_error);
             fflush(log_file);

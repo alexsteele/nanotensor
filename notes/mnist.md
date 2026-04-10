@@ -31,3 +31,10 @@ If we want the quickest accuracy bump, I’d try these first:
 - shuffle training samples each epoch
 - replace uniform mean pooling with something less lossy
 
+# Knobs
+
+The current demo exposes a few simple CLI knobs:
+- `--epochs=N`: more epochs means more passes over the data; this often helps because the model is small and plain SGD learns slowly
+- `--lr=FLOAT`: learning rate controls step size; too small learns slowly, too large can bounce around or diverge
+- `--batch=N`: batch size controls how many images contribute to each SGD update; smaller batches give noisier but more frequent updates
+- `--channels=N`: channel count is the width of the patch feature extractor; larger values usually improve accuracy up to the point where pooling becomes the bottleneck
