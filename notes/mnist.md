@@ -67,3 +67,10 @@ Suggested fields:
 - final train loss: `2.119055`
 - final test acc / error: `0.212702 / 0.787298`
 - notes: same architecture and data subset as baseline; momentum produced a clear early improvement in both loss and test accuracy
+
+### `badaa98` wider model + longer run
+
+- config: `epochs=10 batch=32 channels=32 lr=0.03 momentum=0.9`
+- final train loss: `1.469522`
+- final test acc / error: `0.450101 / 0.549899`
+- notes: much stronger than the 8-channel runs; accuracy climbed steadily through 10 epochs, though this architecture is still far below a standard MNIST convnet
