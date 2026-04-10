@@ -1,0 +1,9 @@
+demo
+llm
+mnist_conv_demo
+tensor_test
+tensor.o
+libtensor.a
+model_snapshot.bin
+
+data/
