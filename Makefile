@@ -21,14 +21,14 @@ $(OBJ): tensor.c tensor.h
 $(LIB): $(OBJ)
 	$(AR) $(ARFLAGS) $(LIB) $(OBJ)
 
-demo: main.c tensor.h $(LIB)
-	$(CC) $(CFLAGS) main.c $(LIB) -lm -o demo
+demo: demo.c tensor.h $(LIB)
+	$(CC) $(CFLAGS) demo.c $(LIB) -lm -o demo
 
 llm: llm.c tensor.h $(LIB)
 	$(CC) $(CFLAGS) llm.c $(LIB) -lm -o llm
 
-mnist-conv: mnist_conv_demo.c tensor.h $(LIB)
-	$(CC) $(CFLAGS) mnist_conv_demo.c $(LIB) -lm -o mnist_conv_demo
+mnist-conv: mnist.c tensor.h $(LIB)
+	$(CC) $(CFLAGS) mnist.c $(LIB) -lm -o mnist_conv_demo
 
 tensor_test: tensor_test.c tensor.h $(LIB)
 	$(CC) $(CFLAGS) tensor_test.c $(LIB) -lm -o tensor_test

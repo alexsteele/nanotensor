@@ -11,10 +11,10 @@ Line totals below come from `git log --numstat` and exclude binary file diffs, w
 LOC - 2985
 
 - tensor.c: 1452
-- mnist_conv_demo.c: 599
+- mnist.c: 599
 - tensor_test.c: 455
 - llm.c: 346
-- main.c: 133
+- demo.c: 133
 
 ## 2026-04-10
 

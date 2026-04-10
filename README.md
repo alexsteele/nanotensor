@@ -69,7 +69,7 @@ cc -O2 -std=c11 -Wall -Wextra -pedantic your_program.c libtensor.a -lm -o your_p
 
 ## Demo
 
-`main.c` trains a small 2-layer network on synthetic data and prints training loss.
+`demo.c` trains a small 2-layer network on synthetic data and prints training loss.
 
 ## LLM Demo
 
@@ -98,7 +98,7 @@ Or run the script directly with optional args:
 
 ## MNIST Conv Demo (MVP)
 
-`mnist_conv_demo.c` is a minimal conv-like classifier using MNIST and existing 2D tensor ops:
+`mnist.c` is a minimal conv-like classifier using MNIST and existing 2D tensor ops:
 
 - `im2col` patch extraction in C
 - `matmul + bias + relu` as the convolution stage

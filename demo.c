@@ -1,5 +1,16 @@
 #include "tensor.h"
 
+/*
+ * demo.c
+ *
+ * Minimal regression demo using nanotensor.
+ * - Generates a small synthetic nonlinear dataset in 2D
+ * - Trains a 2-layer MLP with tanh hidden activations
+ * - Saves and reloads a parameter snapshot after training
+ *
+ * Usage:
+ *   ./demo
+ */
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>

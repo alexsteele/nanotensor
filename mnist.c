@@ -1,5 +1,17 @@
 #include "tensor.h"
 
+/*
+ * mnist.c
+ *
+ * Minimal MNIST conv-like classifier demo using nanotensor.
+ * - Extracts 5x5 image patches with im2col
+ * - Projects patches through a small relu feature stack and class head
+ * - Mean-pools patch logits per image and trains with softmax cross entropy
+ *
+ * Usage:
+ *   ./mnist_conv_demo [--epochs=N] [--batch=N] [--channels=N]
+ *                     [--lr=FLOAT] [--momentum=FLOAT] [--log=PATH]
+ */
 #include <sys/time.h>
 #include <stdint.h>
 #include <stdio.h>
