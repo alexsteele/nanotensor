@@ -20,6 +20,12 @@
 
 #define N_CLASSES 10
 
+typedef enum {
+    OPT_SGD = 0,
+    OPT_MOMENTUM,
+    OPT_ADAM
+} OptimizerKind;
+
 /* Architecture:
  * input [batch, 28x28]
  * -> im2col patches [batch * 24 * 24, 25]
@@ -47,6 +53,9 @@ typedef struct {
     Tensor *pool;
     Tensor *params[4];
     Tensor *velocity[4];
+    Tensor *adam_m1[4];
+    Tensor *adam_m2[4];
+    int adam_step;
     float *xcol_buf;
     Tensor *tmp_conv_lin;
     Tensor *tmp_conv_bias;
@@ -63,6 +72,7 @@ static float mnist_model_train_epoch(MnistConvModel *model,
                                      float *batch_images,
                                      unsigned char *batch_labels,
                                      float lr,
+                                     OptimizerKind opt_kind,
                                      float momentum);
 static Tensor *mnist_model_forward(MnistConvModel *model, Tensor *xcol);
 static void mnist_model_clear_forward_cache(MnistConvModel *model);
@@ -72,6 +82,7 @@ typedef struct {
     int epochs;
     int batch;
     int channels;
+    OptimizerKind opt_kind;
     float lr;
     float momentum;
     const char *log_path;
@@ -95,9 +106,19 @@ static void print_usage(const char *prog) {
     printf("  --epochs=N\n");
     printf("  --batch=N\n");
     printf("  --channels=N\n");
+    printf("  --opt=sgd|momentum|adam\n");
     printf("  --lr=FLOAT\n");
     printf("  --momentum=FLOAT\n");
     printf("  --log=PATH\n");
+}
+
+static const char *optimizer_name(OptimizerKind kind) {
+    switch (kind) {
+        case OPT_SGD: return "sgd";
+        case OPT_MOMENTUM: return "momentum";
+        case OPT_ADAM: return "adam";
+    }
+    return "unknown";
 }
 
 static void parse_args(int argc, char **argv, MnistOptions *opt) {
@@ -106,6 +127,7 @@ static void parse_args(int argc, char **argv, MnistOptions *opt) {
     opt->epochs = 5;
     opt->batch = 32;
     opt->channels = 8;
+    opt->opt_kind = OPT_MOMENTUM;
     opt->lr = 0.03f;
     opt->momentum = 0.9f;
     opt->log_path = "out/mnist_training_log.csv";
@@ -121,6 +143,15 @@ static void parse_args(int argc, char **argv, MnistOptions *opt) {
         } else if (sscanf(arg, "--batch=%d", &opt->batch) == 1) {
             continue;
         } else if (sscanf(arg, "--channels=%d", &opt->channels) == 1) {
+            continue;
+        } else if (strcmp(arg, "--opt=sgd") == 0) {
+            opt->opt_kind = OPT_SGD;
+            continue;
+        } else if (strcmp(arg, "--opt=momentum") == 0) {
+            opt->opt_kind = OPT_MOMENTUM;
+            continue;
+        } else if (strcmp(arg, "--opt=adam") == 0) {
+            opt->opt_kind = OPT_ADAM;
             continue;
         } else if (sscanf(arg, "--lr=%f", &opt->lr) == 1) {
             continue;
@@ -232,10 +263,19 @@ static void mnist_model_init(MnistConvModel *model, int batch, int channels, uns
     model->velocity[1] = tensor_create(1, channels, 0);
     model->velocity[2] = tensor_create(channels, N_CLASSES, 0);
     model->velocity[3] = tensor_create(1, N_CLASSES, 0);
+    model->adam_m1[0] = tensor_create(model->patch_dim, channels, 0);
+    model->adam_m1[1] = tensor_create(1, channels, 0);
+    model->adam_m1[2] = tensor_create(channels, N_CLASSES, 0);
+    model->adam_m1[3] = tensor_create(1, N_CLASSES, 0);
+    model->adam_m2[0] = tensor_create(model->patch_dim, channels, 0);
+    model->adam_m2[1] = tensor_create(1, channels, 0);
+    model->adam_m2[2] = tensor_create(channels, N_CLASSES, 0);
+    model->adam_m2[3] = tensor_create(1, N_CLASSES, 0);
+    model->adam_step = 0;
 
     model->xcol_buf = (float *)malloc(sizeof(float) * (size_t)batch * model->patches * model->patch_dim);
     if (!model->xcol_buf) {
-        die("allocation failed for im2col buffer");
+        die("convnet im2col buffer allocation failed");
     }
 }
 
@@ -270,6 +310,14 @@ static void mnist_model_free(MnistConvModel *model) {
     tensor_free(model->velocity[1]);
     tensor_free(model->velocity[2]);
     tensor_free(model->velocity[3]);
+    tensor_free(model->adam_m1[0]);
+    tensor_free(model->adam_m1[1]);
+    tensor_free(model->adam_m1[2]);
+    tensor_free(model->adam_m1[3]);
+    tensor_free(model->adam_m2[0]);
+    tensor_free(model->adam_m2[1]);
+    tensor_free(model->adam_m2[2]);
+    tensor_free(model->adam_m2[3]);
     memset(model, 0, sizeof(*model));
 }
 
@@ -350,6 +398,7 @@ static float mnist_model_train_epoch(MnistConvModel *model,
                                      float *batch_images,
                                      unsigned char *batch_labels,
                                      float lr,
+                                     OptimizerKind opt_kind,
                                      float momentum) {
     int n_train = (train->n / model->batch) * model->batch;
     float loss_sum = 0.0f;
@@ -378,7 +427,15 @@ static float mnist_model_train_epoch(MnistConvModel *model,
         loss = tensor_cross_entropy(probs, y);
 
         tensor_backward(loss);
-        if (momentum > 0.0f) {
+        if (opt_kind == OPT_ADAM) {
+            TensorAdamOptions adam = {0};
+            adam.lr = lr;
+            adam.beta1 = 0.9f;
+            adam.beta2 = 0.999f;
+            adam.eps = 1e-8f;
+            adam.timestep = ++model->adam_step;
+            tensor_adam_step(model->params, model->adam_m1, model->adam_m2, 4, &adam);
+        } else if (opt_kind == OPT_MOMENTUM) {
             tensor_sgd_momentum_step(model->params, model->velocity, 4, lr, momentum);
         } else {
             tensor_sgd_step(model->params, 4, lr);
@@ -444,13 +501,20 @@ int main(int argc, char **argv) {
         die("failed to open log file");
     }
     print_architecture_summary(log_file, "# ", model.kh, model.kw, model.channels, model.patches);
-    fprintf(log_file, "# train=%d test=%d batch=%d epochs=%d lr=%.4f momentum=%.3f channels=%d\n",
-            train.n, test.n, opt.batch, opt.epochs, opt.lr, opt.momentum, opt.channels);
+    fprintf(log_file, "# train=%d test=%d batch=%d epochs=%d opt=%s lr=%.4f momentum=%.3f channels=%d\n",
+            train.n, test.n, opt.batch, opt.epochs, optimizer_name(opt.opt_kind), opt.lr, opt.momentum, opt.channels);
     fprintf(log_file, "epoch,train_loss,train_acc,train_error,test_acc,test_error\n");
 
     printf("MNIST conv-matmul demo\n");
-    printf("train=%d test=%d batch=%d epochs=%d lr=%.4f momentum=%.3f channels=%d\n",
-           train.n, test.n, opt.batch, opt.epochs, opt.lr, opt.momentum, opt.channels);
+    printf("train=%d test=%d batch=%d epochs=%d opt=%s lr=%.4f momentum=%.3f channels=%d\n",
+           train.n,
+           test.n,
+           opt.batch,
+           opt.epochs,
+           optimizer_name(opt.opt_kind),
+           opt.lr,
+           opt.momentum,
+           opt.channels);
     print_architecture_summary(stdout, NULL, model.kh, model.kw, model.channels, model.patches);
     printf("logging metrics to %s\n", opt.log_path);
 
@@ -461,7 +525,7 @@ int main(int argc, char **argv) {
         {
             mnist_shuffle_indices(train_indices, train.n, &seed);
             float avg_loss = mnist_model_train_epoch(
-                &model, &train, train_indices, batch_images, batch_labels, opt.lr, opt.momentum);
+                &model, &train, train_indices, batch_images, batch_labels, opt.lr, opt.opt_kind, opt.momentum);
             float train_acc = evaluate_accuracy(&train, &model);
             float test_acc = evaluate_accuracy(&test, &model);
             float train_error = 1.0f - train_acc;

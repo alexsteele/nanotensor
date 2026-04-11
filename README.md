@@ -271,12 +271,13 @@ Run (expects raw IDX files, not `.gz`):
   --epochs=5 \
   --batch=32 \
   --channels=8 \
+  --opt=momentum \
   --lr=0.03 \
   --momentum=0.9 \
   --log=out/mnist_training_log.csv
 ```
 
-Named args: `--epochs=N --batch=N --channels=N --lr=FLOAT --momentum=FLOAT --log=PATH`
+Named args: `--epochs=N --batch=N --channels=N --opt=sgd|momentum|adam --lr=FLOAT --momentum=FLOAT --log=PATH`
 
 Dataset paths and the current train/test subset defaults are fixed in the demo for now.
 

@@ -50,8 +50,10 @@ The current demo exposes a few simple CLI knobs:
   give noisier but more frequent updates
 - `--channels=N`: channel count is the width of the patch feature extractor; larger values usually
   improve accuracy up to the point where pooling becomes the bottleneck
+- `--opt=sgd|momentum|adam`: optimizer choice lets us compare plain SGD, velocity-based momentum,
+  and Adam without changing the model code
 - `--momentum=FLOAT`: momentum smooths SGD updates with a velocity term; values like `0.9` often
-  converge faster than plain SGD
+  converge faster than plain SGD; this knob is only used when `--opt=momentum`
 
 The demo now shuffles the training order each epoch before batching. That is usually a better
 default than reusing the same fixed sample order every epoch.
@@ -92,3 +94,16 @@ Suggested fields:
 - final test acc / error: `0.450101 / 0.549899`
 - notes: much stronger than the 8-channel runs; accuracy climbed steadily through 10 epochs, though
   this architecture is still far below a standard MNIST convnet
+
+### optimizer comparison on the 8-channel baseline
+
+- config: `epochs=3 batch=32 channels=8`
+- momentum result:
+  `opt=momentum lr=0.03 momentum=0.9 train_loss=2.119055 test_acc=0.212702 test_error=0.787298`
+- Adam result:
+  `opt=adam lr=0.001 train_loss=2.164872 test_acc=0.245464 test_error=0.754536`
+- notes:
+  on this short run Adam started slower in epoch 1, but by epoch 3 it beat the
+  momentum baseline on both train and test accuracy. This is a useful sign that
+  Adam may optimize the current weak architecture more effectively even without
+  hyperparameter tuning.
