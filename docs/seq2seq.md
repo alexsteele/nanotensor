@@ -78,6 +78,10 @@ Evaluation now runs on a fixed synthetic holdout set generated once at startup.
 That makes `eval_tok` and `eval_seq` much easier to compare across checkpoints
 and across separate runs.
 
+The demo now also supports optimizer selection via `--opt=momentum|adam`.
+Momentum remains the simple baseline, while Adam gives us a second training
+dynamic to compare on the same fixed eval set.
+
 The current trainer logs:
 
 - `step`
@@ -149,6 +153,38 @@ Track one short entry per meaningful run keyed by git commit.
   `0.55-0.62`. Exact-sequence accuracy is still low and noisy, which suggests
   the model is not yet consistently binding each output position to the correct
   source position, especially on longer sequences and repeated digits.
+
+### matched optimizer comparison at 2000 steps
+
+- config:
+  `attention=1 steps=2000 batch=32 embed=16 hidden=32 min_len=3 max_len=8`
+- momentum result:
+  `opt=momentum lr=0.03 step=2000 train_loss=2.080554 train_tok=0.219000 eval_tok=0.355000 eval_seq=0.000000`
+- Adam result:
+  `opt=adam lr=0.003 step=2000 train_loss=1.798076 train_tok=0.399000 eval_tok=0.487000 eval_seq=0.016000`
+- notes:
+  on the same fixed synthetic eval set, Adam is clearly ahead by 2K steps.
+  The gap shows up in both token accuracy and exact-sequence accuracy, so this
+  looks like a real optimization win rather than just noisy checkpoint drift.
+
+### attention + Adam run at 10000 steps
+
+- config:
+  `attention=1 opt=adam steps=10000 batch=32 embed=16 hidden=32 min_len=3 max_len=8 lr=0.003`
+- result:
+  `step=10000 train_loss=0.975108 train_tok=0.650000 eval_tok=0.570000 eval_seq=0.027000`
+- sample:
+  `095 -> 890 (target 590)`
+- sample:
+  `0215168 -> 1022120 (target 8615120)`
+- sample:
+  `6685 -> 6866 (target 5866)`
+- notes:
+  Adam stays clearly ahead of the 2K momentum baseline and reaches sequence
+  accuracy that is competitive with the earlier 10K attention run. The model
+  is still making alignment mistakes, especially on longer sequences and
+  repeated digits, but the optimizer change gives us a much stronger training
+  trajectory without changing the architecture.
 
 ## Scope Boundaries
 

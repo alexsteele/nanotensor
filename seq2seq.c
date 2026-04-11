@@ -25,6 +25,11 @@
 #define EOS_TOKEN 11
 #define VOCAB_SIZE 12
 
+typedef enum {
+    OPT_MOMENTUM = 0,
+    OPT_ADAM
+} OptimizerKind;
+
 typedef struct {
     int steps;
     int batch;
@@ -33,6 +38,7 @@ typedef struct {
     int min_len;
     int max_len;
     int attention;
+    OptimizerKind opt_kind;
     float lr;
     const char *log_path;
 } Seq2SeqOptions;
@@ -61,6 +67,9 @@ typedef struct {
     Tensor *b_out;
     Tensor *params[9];
     Tensor *velocity[9];
+    Tensor *adam_m1[9];
+    Tensor *adam_m2[9];
+    int adam_step;
 } Seq2SeqModel;
 
 typedef struct {
@@ -125,6 +134,14 @@ static void seq2seq_eval(Seq2SeqModel *model,
                          float *out_token_acc,
                          float *out_exact_acc);
 static void seq2seq_decode_example(Seq2SeqModel *model, int seq_len, unsigned int *seed);
+
+static const char *optimizer_name(OptimizerKind kind) {
+    switch (kind) {
+        case OPT_MOMENTUM: return "momentum";
+        case OPT_ADAM: return "adam";
+    }
+    return "unknown";
+}
 
 static void die(const char *msg) {
     fprintf(stderr, "%s\n", msg);
@@ -232,6 +249,7 @@ static void seq2seq_print_usage(const char *prog) {
     printf("  --min-len=N\n");
     printf("  --max-len=N\n");
     printf("  --attention=0|1\n");
+    printf("  --opt=momentum|adam\n");
     printf("  --log=PATH\n");
 }
 
@@ -243,6 +261,7 @@ static void seq2seq_parse_args(int argc, char **argv, Seq2SeqOptions *opt) {
     opt->min_len = 3;
     opt->max_len = 8;
     opt->attention = 0;
+    opt->opt_kind = OPT_MOMENTUM;
     opt->lr = 0.03f;
     opt->log_path = "out/seq2seq_training_log.csv";
 
@@ -267,6 +286,12 @@ static void seq2seq_parse_args(int argc, char **argv, Seq2SeqOptions *opt) {
         } else if (sscanf(arg, "--max-len=%d", &opt->max_len) == 1) {
             continue;
         } else if (sscanf(arg, "--attention=%d", &opt->attention) == 1) {
+            continue;
+        } else if (strcmp(arg, "--opt=momentum") == 0) {
+            opt->opt_kind = OPT_MOMENTUM;
+            continue;
+        } else if (strcmp(arg, "--opt=adam") == 0) {
+            opt->opt_kind = OPT_ADAM;
             continue;
         } else if (strncmp(arg, "--log=", 6) == 0) {
             opt->log_path = argv[i] + 6;
@@ -319,10 +344,10 @@ static void seq2seq_model_init(Seq2SeqModel *model, const Seq2SeqOptions *opt, u
 
     for (int i = 0; i < 9; i++) {
         model->velocity[i] = tensor_create(model->params[i]->rows, model->params[i]->cols, 0);
-        if (!model->velocity[i]) {
-            die("seq2seq velocity allocation failed");
-        }
+        model->adam_m1[i] = tensor_create(model->params[i]->rows, model->params[i]->cols, 0);
+        model->adam_m2[i] = tensor_create(model->params[i]->rows, model->params[i]->cols, 0);
     }
+    model->adam_step = 0;
 }
 
 static void seq2seq_model_free(Seq2SeqModel *model) {
@@ -332,6 +357,8 @@ static void seq2seq_model_free(Seq2SeqModel *model) {
     for (int i = 0; i < 9; i++) {
         tensor_free(model->params[i]);
         tensor_free(model->velocity[i]);
+        tensor_free(model->adam_m1[i]);
+        tensor_free(model->adam_m2[i]);
     }
     memset(model, 0, sizeof(*model));
 }
@@ -642,7 +669,17 @@ static float seq2seq_train_step(Seq2SeqModel *model,
     }
 
     tensor_backward(total_loss);
-    tensor_sgd_momentum_step(model->params, model->velocity, 9, opt->lr, 0.9f);
+    if (opt->opt_kind == OPT_ADAM) {
+        TensorAdamOptions adam = {0};
+        adam.lr = opt->lr;
+        adam.beta1 = 0.9f;
+        adam.beta2 = 0.999f;
+        adam.eps = 1e-8f;
+        adam.timestep = ++model->adam_step;
+        tensor_adam_step(model->params, model->adam_m1, model->adam_m2, 9, &adam);
+    } else {
+        tensor_sgd_momentum_step(model->params, model->velocity, 9, opt->lr, 0.9f);
+    }
 
     {
         float loss_value = total_loss->data[0];
@@ -827,7 +864,11 @@ int main(int argc, char **argv) {
            opt.batch,
            opt.min_len,
            opt.max_len);
-    printf("opt: lr=%.4f attention=%d log=%s\n", opt.lr, opt.attention, opt.log_path);
+    printf("opt: lr=%.4f attention=%d opt=%s log=%s\n",
+           opt.lr,
+           opt.attention,
+           optimizer_name(opt.opt_kind),
+           opt.log_path);
     printf("opt: eval=fixed_synth batches=%d seed=%u\n", eval_set.num_batches, 4242u);
     logf = fopen(opt.log_path, "w");
     if (!logf) {
