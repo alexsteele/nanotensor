@@ -1553,3 +1553,54 @@ void tensor_sgd_momentum_step(Tensor **params, Tensor **velocity, size_t n_param
         }
     }
 }
+
+void tensor_adam_step(Tensor **params,
+                      Tensor **m1,
+                      Tensor **m2,
+                      size_t n_params,
+                      const TensorAdamOptions *opt) {
+    if (!opt) {
+        die("tensor_adam_step: options must not be null");
+    }
+    if (opt->timestep <= 0) {
+        die("tensor_adam_step: timestep must be >= 1");
+    }
+    for (size_t p = 0; p < n_params; p++) {
+        Tensor *t = params[p];
+        Tensor *m;
+        Tensor *v;
+        int n;
+        float bias1;
+        float bias2;
+
+        if (!t->requires_grad || !t->grad) {
+            continue;
+        }
+        if (!m1 || !m1[p] || !m2 || !m2[p]) {
+            die("tensor_adam_step: missing moment tensor");
+        }
+        m = m1[p];
+        v = m2[p];
+        if (m->rows != t->rows || m->cols != t->cols || v->rows != t->rows || v->cols != t->cols) {
+            die("tensor_adam_step: moment shape mismatch");
+        }
+
+        n = tensor_numel(t);
+        /* Bias correction converts the moving averages m1/m2 into unbiased
+         * estimates during the early Adam steps.
+         */
+        bias1 = 1.0f - powf(opt->beta1, (float)opt->timestep);
+        bias2 = 1.0f - powf(opt->beta2, (float)opt->timestep);
+        for (int i = 0; i < n; i++) {
+            float g = t->grad[i];
+            float m_hat;
+            float v_hat;
+
+            m->data[i] = opt->beta1 * m->data[i] + (1.0f - opt->beta1) * g;
+            v->data[i] = opt->beta2 * v->data[i] + (1.0f - opt->beta2) * g * g;
+            m_hat = m->data[i] / bias1;
+            v_hat = v->data[i] / bias2;
+            t->data[i] -= opt->lr * m_hat / (sqrtf(v_hat) + opt->eps);
+        }
+    }
+}

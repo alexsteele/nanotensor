@@ -440,6 +440,40 @@ static int test_backward_mse_matmul(void) {
     return 0;
 }
 
+static int test_adam_step(void) {
+    float pv[] = {1.0f, -2.0f};
+    Tensor *param = tensor_from_array(1, 2, pv, 1);
+    Tensor *m1 = tensor_create(1, 2, 0);
+    Tensor *m2 = tensor_create(1, 2, 0);
+    TensorAdamOptions opt = {0};
+    Tensor *params[] = {param};
+    Tensor *mom1[] = {m1};
+    Tensor *mom2[] = {m2};
+
+    ASSERT_TRUE(param->grad != NULL);
+    param->grad[0] = 0.1f;
+    param->grad[1] = -0.2f;
+
+    opt.lr = 0.001f;
+    opt.beta1 = 0.9f;
+    opt.beta2 = 0.999f;
+    opt.eps = 1e-8f;
+    opt.timestep = 1;
+    tensor_adam_step(params, mom1, mom2, 1, &opt);
+
+    ASSERT_CLOSE(m1->data[0], 0.01f, 1e-6f);
+    ASSERT_CLOSE(m1->data[1], -0.02f, 1e-6f);
+    ASSERT_CLOSE(m2->data[0], 0.00001f, 1e-8f);
+    ASSERT_CLOSE(m2->data[1], 0.00004f, 1e-8f);
+    ASSERT_CLOSE(param->data[0], 0.999f, 1e-6f);
+    ASSERT_CLOSE(param->data[1], -1.999f, 1e-6f);
+
+    tensor_free(param);
+    tensor_free(m1);
+    tensor_free(m2);
+    return 0;
+}
+
 static int test_reshape_transpose_slice(void) {
     float av[] = {1, 2, 3, 4, 5, 6};
     Tensor *a = tensor_from_array(2, 3, av, 0);
@@ -548,6 +582,7 @@ int main(void) {
     if (test_softmax_cross_entropy() != 0) return 1;
     if (test_cmp_ops() != 0) return 1;
     if (test_backward_mse_matmul() != 0) return 1;
+    if (test_adam_step() != 0) return 1;
     if (test_reshape_transpose_slice() != 0) return 1;
     if (test_backward_layout_ops() != 0) return 1;
     if (test_save_load() != 0) return 1;

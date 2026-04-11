@@ -5,6 +5,7 @@
 #include <stdio.h>
 
 typedef struct Tensor Tensor;
+typedef struct TensorAdamOptions TensorAdamOptions;
 
 struct Tensor {
     int rows;
@@ -24,6 +25,14 @@ struct Tensor {
     int aux1;
     int aux2;
     int aux3;
+};
+
+struct TensorAdamOptions {
+    float lr;
+    float beta1;
+    float beta2;
+    float eps;
+    int timestep;
 };
 
 Tensor *tensor_create(int rows, int cols, int requires_grad);
@@ -84,5 +93,17 @@ void tensor_backward(Tensor *loss);
 
 void tensor_sgd_step(Tensor **params, size_t n_params, float lr);
 void tensor_sgd_momentum_step(Tensor **params, Tensor **velocity, size_t n_params, float lr, float momentum);
+/* Adam update using caller-owned moment buffers:
+ * - m1 stores the exponential moving average of gradients (first moment)
+ * - m2 stores the exponential moving average of squared gradients (second moment)
+ * References:
+ * - https://arxiv.org/abs/1412.6980
+ * - https://docs.pytorch.org/docs/stable/generated/torch.optim.Adam.html
+ */
+void tensor_adam_step(Tensor **params,
+                      Tensor **m1,
+                      Tensor **m2,
+                      size_t n_params,
+                      const TensorAdamOptions *opt);
 
 #endif
