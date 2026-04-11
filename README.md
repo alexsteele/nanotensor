@@ -23,6 +23,7 @@ make run         # runs the demo training program
 make rebuild     # forces a clean rebuild of all binaries for this machine
 make mnist-data  # downloads and unpacks raw MNIST IDX files into data/mnist
 make ngram       # builds the neural word-level n-gram demo
+make autoencoder # builds the MNIST autoencoder demo
 ```
 
 ## Example
@@ -167,6 +168,38 @@ available, shows a few next-word predictions plus a short greedy sample after tr
 
 - `out/ngram_snapshot.bin`
 - `out/ngram_vocab.txt`
+
+## Autoencoder Demo
+
+`autoencoder.c` is a minimal MNIST MLP autoencoder:
+
+- flattens each image to `784` inputs
+- encodes through a hidden layer and latent bottleneck
+- decodes back to pixel space with a sigmoid output layer
+- trains with MSE reconstruction loss
+
+Build:
+
+```bash
+make autoencoder
+```
+
+Run:
+
+```bash
+./autoencoder \
+  --epochs=10 \
+  --batch=32 \
+  --hidden=128 \
+  --latent=32 \
+  --lr=0.01 \
+  --log=out/autoencoder_training_log.csv
+```
+
+Named args: `--epochs=N --batch=N --hidden=N --latent=N --lr=FLOAT --log=PATH`
+
+The demo expects the raw MNIST IDX files under `data/mnist/` and writes one CSV
+row per epoch with `train_loss`, `eval_loss`, and `elapsed_s`.
 
 ## MNIST Conv Demo (MVP)
 
