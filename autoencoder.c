@@ -1,3 +1,4 @@
+#include "mnist.h"
 #include "tensor.h"
 
 /*
@@ -15,22 +16,9 @@
  *                 [--recon=PATH]
  */
 #include <sys/time.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-#define MNIST_ROWS 28
-#define MNIST_COLS 28
-#define MNIST_PIXELS (MNIST_ROWS * MNIST_COLS)
-
-typedef struct {
-    int n;
-    int rows;
-    int cols;
-    float *images;
-    unsigned char *labels;
-} MnistSet;
 
 /* Architecture:
  * input [batch, 784]
@@ -106,11 +94,6 @@ static double now_seconds(void) {
     return (double)tv.tv_sec + (double)tv.tv_usec / 1000000.0;
 }
 
-static float rand_uniform(unsigned int *seed) {
-    *seed = (1103515245U * (*seed) + 12345U);
-    return (float)((*seed) & 0x7fffffffU) / 2147483648.0f;
-}
-
 static void print_usage(const char *prog) {
     printf("usage: %s [options]\n", prog);
     printf("  --epochs=N\n");
@@ -154,110 +137,6 @@ static void parse_args(int argc, char **argv, AutoencoderOptions *opt) {
         } else {
             die("unknown option");
         }
-    }
-}
-
-static uint32_t read_u32_be(FILE *f) {
-    unsigned char b[4];
-    if (fread(b, 1, 4, f) != 4) {
-        die("failed to read u32");
-    }
-    return ((uint32_t)b[0] << 24) | ((uint32_t)b[1] << 16) | ((uint32_t)b[2] << 8) | (uint32_t)b[3];
-}
-
-static MnistSet load_mnist(const char *images_path, const char *labels_path, int max_samples) {
-    FILE *fi = fopen(images_path, "rb");
-    FILE *fl = fopen(labels_path, "rb");
-    MnistSet ds = {0};
-    uint32_t img_magic;
-    uint32_t lbl_magic;
-    uint32_t n_images;
-    uint32_t n_labels;
-    uint32_t rows;
-    uint32_t cols;
-    unsigned char *buf;
-
-    if (!fi || !fl) {
-        die("failed to open MNIST files");
-    }
-
-    img_magic = read_u32_be(fi);
-    n_images = read_u32_be(fi);
-    rows = read_u32_be(fi);
-    cols = read_u32_be(fi);
-
-    lbl_magic = read_u32_be(fl);
-    n_labels = read_u32_be(fl);
-
-    if (img_magic != 2051U || lbl_magic != 2049U) {
-        die("invalid MNIST magic (expecting raw IDX files, not .gz)");
-    }
-    if (rows != MNIST_ROWS || cols != MNIST_COLS) {
-        die("unexpected MNIST image shape");
-    }
-    if (n_images != n_labels) {
-        die("MNIST images/labels length mismatch");
-    }
-
-    ds.n = (int)n_images;
-    if (max_samples > 0 && max_samples < ds.n) {
-        ds.n = max_samples;
-    }
-    ds.rows = (int)rows;
-    ds.cols = (int)cols;
-    ds.images = (float *)malloc(sizeof(float) * (size_t)ds.n * MNIST_PIXELS);
-    ds.labels = (unsigned char *)malloc((size_t)ds.n);
-    buf = (unsigned char *)malloc((size_t)ds.n * MNIST_PIXELS);
-    if (!ds.images || !ds.labels || !buf) {
-        die("allocation failed loading MNIST");
-    }
-
-    if (fread(buf, 1, (size_t)ds.n * MNIST_PIXELS, fi) != (size_t)ds.n * MNIST_PIXELS) {
-        die("failed to read MNIST images");
-    }
-    if (fread(ds.labels, 1, (size_t)ds.n, fl) != (size_t)ds.n) {
-        die("failed to read MNIST labels");
-    }
-    for (int i = 0; i < ds.n * MNIST_PIXELS; i++) {
-        ds.images[i] = (float)buf[i] / 255.0f;
-    }
-
-    free(buf);
-    fclose(fi);
-    fclose(fl);
-    return ds;
-}
-
-static void free_mnist(MnistSet *ds) {
-    if (!ds) {
-        return;
-    }
-    free(ds->images);
-    free(ds->labels);
-    ds->images = NULL;
-    ds->labels = NULL;
-    ds->n = 0;
-}
-
-static void shuffle_indices(int *indices, int n, unsigned int *seed) {
-    for (int i = n - 1; i > 0; i--) {
-        int j = (int)(rand_uniform(seed) * (float)(i + 1));
-        int tmp = indices[i];
-        indices[i] = indices[j];
-        indices[j] = tmp;
-    }
-}
-
-static void gather_batch_images(const MnistSet *ds,
-                                const int *indices,
-                                int start,
-                                int batch,
-                                float *batch_images) {
-    for (int b = 0; b < batch; b++) {
-        int idx = indices[start + b];
-        memcpy(batch_images + (size_t)b * MNIST_PIXELS,
-               ds->images + (size_t)idx * MNIST_PIXELS,
-               sizeof(float) * MNIST_PIXELS);
     }
 }
 
@@ -386,7 +265,7 @@ static float autoencoder_train_epoch(MnistAutoencoder *model,
         Tensor *recon;
         Tensor *loss;
 
-        gather_batch_images(train, indices, i, model->batch, batch_images);
+        mnist_gather_batch_images(train, indices, i, model->batch, batch_images);
         x = tensor_from_array(model->batch, MNIST_PIXELS, batch_images, 0);
         recon = autoencoder_forward(model, x);
         loss = tensor_mse_loss(recon, x);
@@ -500,8 +379,8 @@ int main(int argc, char **argv) {
     if (opt.latent <= 0) opt.latent = 32;
     if (opt.lr <= 0.0f) opt.lr = 0.01f;
 
-    train = load_mnist(train_images, train_labels, train_limit);
-    test = load_mnist(test_images, test_labels, test_limit);
+    train = mnist_load(train_images, train_labels, train_limit);
+    test = mnist_load(test_images, test_labels, test_limit);
 
     if (train.n < opt.batch || test.n < opt.batch) {
         die("batch size larger than loaded MNIST subset");
@@ -533,7 +412,7 @@ int main(int argc, char **argv) {
         float eval_loss;
         double elapsed;
 
-        shuffle_indices(indices, train.n, &seed);
+        mnist_shuffle_indices(indices, train.n, &seed);
         train_loss = autoencoder_train_epoch(&model, &train, indices, batch_images, opt.lr);
         eval_loss = autoencoder_eval(&model, &test, batch_images);
         elapsed = now_seconds() - start_time;
@@ -553,7 +432,7 @@ int main(int argc, char **argv) {
     autoencoder_free(&model);
     free(indices);
     free(batch_images);
-    free_mnist(&train);
-    free_mnist(&test);
+    mnist_free(&train);
+    mnist_free(&test);
     return 0;
 }

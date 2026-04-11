@@ -1,5 +1,10 @@
 demo
 llm
+skipgram
+ngram
+seq2seq
+autoencoder
+word2vec
 mnist_conv_demo
 tensor_test
 tensor.o

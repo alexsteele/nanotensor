@@ -11,13 +11,14 @@ adjacent commits are more than 1 hour apart, then sum the first-to-last span wit
 | 2026-02-21 |        0.98h |        2259 |            22 |
 | 2026-04-10 |        2.42h |        1586 |           201 |
 
-LOC - 4923
+LOC - 4972
 
 - tensor.c: 1489
+- convnet.c: 494
+- mnist.c: 136
+- autoencoder.c: 443
+- tensor_test.c: 557
 - ngram.c: 614
-- mnist.c: 611
-- autoencoder.c: 559
-- tensor_test.c: 477
 - skipgram.c: 350
 - llm.c: 346
 - vocab.c: 333

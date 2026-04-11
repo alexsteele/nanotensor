@@ -4,7 +4,7 @@
 
 Probably a mix of “small model” and “hard-to-optimize setup,” not one single bug.
 
-In this demo, the architecture in [mnist.c](/Users/alex/Code/nanotensor/mnist.c)
+In this demo, the architecture in [convnet.c](/Users/alex/Code/nanotensor/convnet.c)
 is pretty limited:
 
 - each `5x5` patch is projected independently

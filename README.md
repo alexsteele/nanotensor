@@ -245,7 +245,8 @@ The design note lives in `docs/seq2seq.md`.
 
 ## MNIST Conv Demo (MVP)
 
-`mnist.c` is a minimal conv-like classifier using MNIST and existing 2D tensor ops:
+`convnet.c` is a minimal conv-like classifier using MNIST and existing 2D tensor ops.
+The shared IDX loader and batch helpers now live in `mnist.c` / `mnist.h`:
 
 - `im2col` patch extraction in C
 - `matmul + bias + relu` as the convolution stage

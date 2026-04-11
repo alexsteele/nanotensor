@@ -38,11 +38,11 @@ ngram: ngram.c vocab.c vocab.h tensor.h $(LIB)
 seq2seq: seq2seq.c tensor.h $(LIB)
 	$(CC) $(CFLAGS) seq2seq.c $(LIB) -lm -o seq2seq
 
-autoencoder: autoencoder.c tensor.h $(LIB)
-	$(CC) $(CFLAGS) autoencoder.c $(LIB) -lm -o autoencoder
+autoencoder: autoencoder.c mnist.c mnist.h tensor.h $(LIB)
+	$(CC) $(CFLAGS) autoencoder.c mnist.c $(LIB) -lm -o autoencoder
 
-mnist-conv: mnist.c tensor.h $(LIB)
-	$(CC) $(CFLAGS) mnist.c $(LIB) -lm -o mnist_conv_demo
+mnist-conv: convnet.c mnist.c mnist.h tensor.h $(LIB)
+	$(CC) $(CFLAGS) convnet.c mnist.c $(LIB) -lm -o mnist_conv_demo
 
 tensor_test: tensor_test.c tensor.h $(LIB)
 	$(CC) $(CFLAGS) tensor_test.c $(LIB) -lm -o tensor_test
