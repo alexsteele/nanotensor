@@ -12,6 +12,7 @@
  * Usage:
  *   ./autoencoder [--epochs=N] [--batch=N] [--hidden=N]
  *                 [--latent=N] [--lr=FLOAT] [--log=PATH]
+ *                 [--recon=PATH]
  */
 #include <sys/time.h>
 #include <stdint.h>
@@ -74,6 +75,7 @@ typedef struct {
     int latent;
     float lr;
     const char *log_path;
+    const char *recon_path;
 } AutoencoderOptions;
 
 static void autoencoder_init(MnistAutoencoder *model, const AutoencoderOptions *opt, unsigned int *seed);
@@ -86,6 +88,10 @@ static float autoencoder_train_epoch(MnistAutoencoder *model,
                                      float *batch_images,
                                      float lr);
 static float autoencoder_eval(MnistAutoencoder *model, const MnistSet *ds, float *batch_images);
+static void autoencoder_save_reconstructions(MnistAutoencoder *model,
+                                             const MnistSet *ds,
+                                             const char *path,
+                                             int n_examples);
 
 static void die(const char *msg) {
     fprintf(stderr, "%s\n", msg);
@@ -113,17 +119,17 @@ static void print_usage(const char *prog) {
     printf("  --latent=N\n");
     printf("  --lr=FLOAT\n");
     printf("  --log=PATH\n");
+    printf("  --recon=PATH\n");
 }
 
 static void parse_args(int argc, char **argv, AutoencoderOptions *opt) {
-    char log_path_buf[1024];
-
     opt->epochs = 10;
     opt->batch = 32;
     opt->hidden = 128;
     opt->latent = 32;
     opt->lr = 0.01f;
     opt->log_path = "out/autoencoder_training_log.csv";
+    opt->recon_path = "out/autoencoder_recon.csv";
 
     for (int i = 1; i < argc; i++) {
         const char *arg = argv[i];
@@ -141,8 +147,10 @@ static void parse_args(int argc, char **argv, AutoencoderOptions *opt) {
             continue;
         } else if (sscanf(arg, "--lr=%f", &opt->lr) == 1) {
             continue;
-        } else if (sscanf(arg, "--log=%1023s", log_path_buf) == 1) {
+        } else if (strncmp(arg, "--log=", 6) == 0) {
             opt->log_path = argv[i] + 6;
+        } else if (strncmp(arg, "--recon=", 8) == 0) {
+            opt->recon_path = argv[i] + 8;
         } else {
             die("unknown option");
         }
@@ -425,6 +433,48 @@ static float autoencoder_eval(MnistAutoencoder *model, const MnistSet *ds, float
     return loss_count > 0 ? loss_sum / (float)loss_count : 0.0f;
 }
 
+static void autoencoder_save_reconstructions(MnistAutoencoder *model,
+                                             const MnistSet *ds,
+                                             const char *path,
+                                             int n_examples) {
+    FILE *f;
+    Tensor *x;
+    Tensor *recon;
+    int count = n_examples;
+
+    if (count > model->batch) {
+        count = model->batch;
+    }
+    if (count > ds->n) {
+        count = ds->n;
+    }
+    if (count <= 0) {
+        return;
+    }
+
+    f = fopen(path, "w");
+    if (!f) {
+        die("failed to open reconstruction output");
+    }
+
+    x = tensor_from_array(model->batch, MNIST_PIXELS, ds->images, 0);
+    recon = autoencoder_forward(model, x);
+
+    fprintf(f, "kind,index,pixel,value\n");
+    for (int i = 0; i < count; i++) {
+        for (int p = 0; p < MNIST_PIXELS; p++) {
+            fprintf(f, "input,%d,%d,%.6f\n", i, p, ds->images[(size_t)i * MNIST_PIXELS + p]);
+        }
+        for (int p = 0; p < MNIST_PIXELS; p++) {
+            fprintf(f, "recon,%d,%d,%.6f\n", i, p, recon->data[(size_t)i * MNIST_PIXELS + p]);
+        }
+    }
+
+    fclose(f);
+    tensor_free(x);
+    autoencoder_clear_forward_cache(model);
+}
+
 int main(int argc, char **argv) {
     const char *train_images = "data/mnist/train-images-idx3-ubyte";
     const char *train_labels = "data/mnist/train-labels-idx1-ubyte";
@@ -469,7 +519,7 @@ int main(int argc, char **argv) {
 
     printf("loaded MNIST train=%d test=%d batch=%d\n", train.n, test.n, opt.batch);
     print_architecture_summary(stdout, &model);
-    printf("opt: epochs=%d lr=%.4f\n", opt.epochs, opt.lr);
+    printf("opt: epochs=%d lr=%.4f recon=%s\n", opt.epochs, opt.lr, opt.recon_path);
 
     logf = fopen(opt.log_path, "w");
     if (!logf) {
@@ -498,6 +548,8 @@ int main(int argc, char **argv) {
     }
 
     fclose(logf);
+    autoencoder_save_reconstructions(&model, &test, opt.recon_path, 8);
+    printf("saved reconstructions: %s\n", opt.recon_path);
     autoencoder_free(&model);
     free(indices);
     free(batch_images);

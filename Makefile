@@ -7,6 +7,8 @@ MNIST_DIR ?= data/mnist
 PYTHON ?= .venv/bin/python3
 LOG ?= out/mnist_training_log.csv
 OUT ?= out/mnist_training_loss.png
+RECON ?= out/autoencoder_recon.csv
+RECON_OUT ?= out/autoencoder_recon.png
 
 LIB := libtensor.a
 OBJ := tensor.o
@@ -69,6 +71,9 @@ mnist-data:
 plot-loss:
 	$(PYTHON) scripts/plot_training_loss.py $(LOG) $(OUT)
 
+plot-autoencoder:
+	$(PYTHON) scripts/render_autoencoder_recon.py $(RECON) $(RECON_OUT)
+
 rebuild:
 	$(MAKE) clean
 	$(MAKE) all llm skipgram ngram autoencoder mnist-conv tensor_test
@@ -79,4 +84,4 @@ run-shakespeare:
 clean:
 	rm -f demo llm skipgram ngram autoencoder mnist_conv_demo tensor_test $(OBJ) $(LIB) tensor_test_single.bin tensor_test_snapshot.bin
 
-.PHONY: all static test run run-llm run-skipgram run-ngram run-autoencoder run-mnist-conv mnist-data plot-loss rebuild run-shakespeare clean
+.PHONY: all static test run run-llm run-skipgram run-ngram run-autoencoder run-mnist-conv mnist-data plot-loss plot-autoencoder rebuild run-shakespeare clean

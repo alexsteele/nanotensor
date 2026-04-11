@@ -35,6 +35,7 @@ The main options are:
 - `--latent=N`
 - `--lr=FLOAT`
 - `--log=PATH`
+- `--recon=PATH`
 
 Defaults in the current demo are:
 
@@ -44,6 +45,7 @@ Defaults in the current demo are:
 - `latent=32`
 - `lr=0.01`
 - `log=out/autoencoder_training_log.csv`
+- `recon=out/autoencoder_recon.csv`
 
 ## Dataset
 
@@ -60,7 +62,7 @@ This first pass is intentionally small and readable:
 - no convolutional encoder
 - no tied weights
 - no latent sampling
-- no reconstruction image export yet
+- reconstruction export is a simple CSV + Python render step
 
 That makes it a good baseline for future comparison against deeper or more
 structured autoencoder variants.

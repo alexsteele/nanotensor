@@ -193,13 +193,19 @@ Run:
   --hidden=128 \
   --latent=32 \
   --lr=0.01 \
-  --log=out/autoencoder_training_log.csv
+  --log=out/autoencoder_training_log.csv \
+  --recon=out/autoencoder_recon.csv
 ```
 
-Named args: `--epochs=N --batch=N --hidden=N --latent=N --lr=FLOAT --log=PATH`
+Named args: `--epochs=N --batch=N --hidden=N --latent=N --lr=FLOAT --log=PATH --recon=PATH`
 
 The demo expects the raw MNIST IDX files under `data/mnist/` and writes one CSV
-row per epoch with `train_loss`, `eval_loss`, and `elapsed_s`.
+row per epoch with `train_loss`, `eval_loss`, and `elapsed_s`. It also saves a
+small reconstruction dump CSV that can be rendered to a PNG grid:
+
+```bash
+make plot-autoencoder RECON=out/autoencoder_recon.csv RECON_OUT=out/autoencoder_recon.png
+```
 
 ## MNIST Conv Demo (MVP)
 
