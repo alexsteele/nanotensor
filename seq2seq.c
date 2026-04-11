@@ -79,6 +79,7 @@ static void seq2seq_model_free(Seq2SeqModel *model);
 static void seq2seq_print_architecture(const Seq2SeqModel *model);
 static void seq2seq_batch_init(Seq2SeqBatch *batch, int batch_size, int max_len);
 static void seq2seq_batch_free(Seq2SeqBatch *batch);
+static int seq2seq_curriculum_max_len(const Seq2SeqOptions *opt, int step);
 static void seq2seq_sample_batch(Seq2SeqBatch *batch, unsigned int *seed);
 static float seq2seq_train_step(Seq2SeqModel *model,
                                 const Seq2SeqOptions *opt,
@@ -327,6 +328,33 @@ static void seq2seq_batch_free(Seq2SeqBatch *batch) {
     free(batch->dec_in_tokens);
     free(batch->dec_tgt_tokens);
     memset(batch, 0, sizeof(*batch));
+}
+
+static int seq2seq_curriculum_max_len(const Seq2SeqOptions *opt, int step) {
+    int span = opt->max_len - opt->min_len;
+    int stage1_max = opt->min_len + (span >= 1 ? span / 3 : 0);
+    int stage2_max = opt->min_len + (span >= 2 ? (2 * span) / 3 : 0);
+
+    if (stage1_max < opt->min_len) {
+        stage1_max = opt->min_len;
+    }
+    if (stage2_max < stage1_max) {
+        stage2_max = stage1_max;
+    }
+    if (stage1_max > opt->max_len) {
+        stage1_max = opt->max_len;
+    }
+    if (stage2_max > opt->max_len) {
+        stage2_max = opt->max_len;
+    }
+
+    if (step <= opt->steps / 3) {
+        return stage1_max;
+    }
+    if (step <= (2 * opt->steps) / 3) {
+        return stage2_max;
+    }
+    return opt->max_len;
 }
 
 static void seq2seq_sample_batch(Seq2SeqBatch *batch, unsigned int *seed) {
@@ -601,28 +629,32 @@ int main(int argc, char **argv) {
     if (!logf) {
         die("failed to open seq2seq log file");
     }
-    fprintf(logf, "step,seq_len,train_loss,train_tok,eval_tok,eval_seq\n");
+    fprintf(logf, "step,seq_len,curriculum_max_len,train_loss,train_tok,eval_tok,eval_seq\n");
     for (int step = 1; step <= opt.steps; step++) {
+        int curriculum_max_len;
         float train_loss;
         float token_acc;
         float eval_token_acc;
         float eval_exact_acc;
-        batch.seq_len = rand_int(&seed, opt.min_len, opt.max_len);
+        curriculum_max_len = seq2seq_curriculum_max_len(&opt, step);
+        batch.seq_len = rand_int(&seed, opt.min_len, curriculum_max_len);
         seq2seq_sample_batch(&batch, &seed);
         train_loss = seq2seq_train_step(&model, &opt, &batch, &seed, &token_acc);
         if (step == 1 || step % 100 == 0 || step == opt.steps) {
             unsigned int eval_seed = 4242u + (unsigned int)step;
             seq2seq_eval(&model, &opt, &eval_seed, &eval_token_acc, &eval_exact_acc);
-            printf("step %4d len %d loss %.6f train_tok %.3f eval_tok %.3f eval_seq %.3f",
+            printf("step %4d len %d cur_max %d loss %.6f train_tok %.3f eval_tok %.3f eval_seq %.3f",
                    step,
                    batch.seq_len,
+                   curriculum_max_len,
                    train_loss,
                    token_acc,
                    eval_token_acc,
                    eval_exact_acc);
-            fprintf(logf, "%d,%d,%.6f,%.6f,%.6f,%.6f\n",
+            fprintf(logf, "%d,%d,%d,%.6f,%.6f,%.6f,%.6f\n",
                     step,
                     batch.seq_len,
+                    curriculum_max_len,
                     train_loss,
                     token_acc,
                     eval_token_acc,

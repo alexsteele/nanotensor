@@ -219,6 +219,7 @@ The current baseline uses:
 - tanh RNN encoder
 - tanh RNN decoder
 - no attention yet
+- simple length curriculum from shorter to longer sequences
 - periodic CSV logging for baseline comparison
 
 Build and run:
@@ -238,8 +239,9 @@ make seq2seq
 
 Named args: `--steps=N --batch=N --embed=N --hidden=N --lr=FLOAT --min-len=N --max-len=N --log=PATH`
 
-The demo logs checkpoint rows with `train_loss`, token accuracy, and exact-sequence
-accuracy to `out/seq2seq_training_log.csv`. The design note lives in `docs/seq2seq.md`.
+The demo logs checkpoint rows with `train_loss`, token accuracy, exact-sequence
+accuracy, and the active curriculum max length to `out/seq2seq_training_log.csv`.
+The design note lives in `docs/seq2seq.md`.
 
 ## MNIST Conv Demo (MVP)
 

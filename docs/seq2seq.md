@@ -62,10 +62,44 @@ The current baseline should log:
 
 - `step`
 - `seq_len`
+- `curriculum_max_len`
 - `train_loss`
 - `train_tok`
 - `eval_tok`
 - `eval_seq`
+
+The trainer now uses a simple length curriculum:
+
+- early steps sample shorter sequences
+- middle steps widen the sampled length range
+- final steps use the full configured `max_len`
+
+This is meant to make the plain fixed-context encoder-decoder easier to train
+before trying a larger architectural upgrade like attention.
+
+## Experiment Log
+
+Track one short entry per meaningful run keyed by git commit.
+
+### `4e73919` curriculum baseline smoke run
+
+- config:
+  `steps=9 batch=4 embed=8 hidden=16 min_len=3 max_len=8 lr=0.03`
+- curriculum:
+  early checkpoint sampled with `curriculum_max_len=4`, final checkpoint with
+  `curriculum_max_len=8`
+- checkpoint metrics:
+  step `1`: `train_loss=2.484628 train_tok=0.250000 eval_tok=0.168269 eval_seq=0.000000`
+- checkpoint metrics:
+  step `9`: `train_loss=2.464005 train_tok=0.125000 eval_tok=0.181818 eval_seq=0.000000`
+- sample:
+  `290 -> 0000 (target 092)`
+- sample:
+  `0513915 ->  (target 5193150)`
+- notes:
+  this is only a very short sanity-check run, so exact-sequence accuracy stayed
+  at zero; the main value is confirming the current curriculum + logging
+  baseline and output format
 
 ## Scope Boundaries
 
