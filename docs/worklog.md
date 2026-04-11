@@ -10,19 +10,40 @@ adjacent commits are more than 1 hour apart, then sum the first-to-last span wit
 | ---------- | -----------: | ----------: | ------------: |
 | 2026-02-21 |        0.98h |        2259 |            22 |
 | 2026-04-10 |        2.42h |        1586 |           201 |
+| 2026-04-11 |        4.08h |        2545 |           828 |
 
-LOC - 4972
+LOC - 6378
 
-- tensor.c: 1489
-- convnet.c: 494
-- mnist.c: 136
-- autoencoder.c: 443
-- tensor_test.c: 557
-- ngram.c: 614
-- skipgram.c: 350
+- tensor.c: 1658
+- seq2seq.c: 1000
+- ngram.c: 669
+- tensor_test.c: 612
+- convnet.c: 553
+- autoencoder.c: 515
+- skipgram.c: 412
 - llm.c: 346
 - vocab.c: 333
+- mnist.c: 136
 - demo.c: 144
+
+## 2026-04-11
+
+- Built the seq2seq reversal demo from a plain encoder-decoder baseline into an
+  attention-equipped experiment with fixed holdout evals, curriculum logging,
+  Adam support, and a learned additive attention follow-up run.
+- Added shared `mnist.c` / `mnist.h` loading helpers, renamed the MNIST
+  classifier demo around `convnet.c`, and added Adam support for both the
+  convnet and autoencoder demos.
+- Added `tensor_adam_step`, binary cross-entropy, and new tensor test coverage,
+  then used those pieces to improve the autoencoder with `--opt=adam` and
+  `--loss=bce`.
+- Refreshed the autoencoder artifacts with a stronger reconstruction image and a
+  smaller checked-in training log CSV.
+- Added user-friendly report artifacts for seq2seq, skip-gram, and n-gram, plus
+  checked-in example text files under `examples/`.
+- Added a reproducible `make examples` flow backed by
+  `scripts/run_examples.sh`, and documented the example artifact workflow in
+  the README.
 
 ## 2026-04-10
 
