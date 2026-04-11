@@ -9,20 +9,17 @@
 
 ## Seq2Seq
 
-- switch eval to a fixed held-out synthetic set so `eval_tok` and `eval_seq`
-  are less noisy across checkpoints and runs
-- compare plain RNN vs attention on the same fixed eval set
+- make Adam the default optimizer for seq2seq experiments if longer runs keep
+  looking better than momentum
+- compare plain RNN vs attention on the same fixed eval set with Adam
 - try a learned attention scoring layer if dot attention plateaus
+- add a cleaner qualitative eval panel with a fixed set of decode examples
 
 ## MNIST Shared Infra
 
-- consider pulling the IDX reader / MNIST dataset logic into a shared `mnist.h`
-  + `mnist.c` loader used by classifier and autoencoder demos
-
 ## Optimizers
 
-- add an Adam optimizer to the tensor library
-- compare SGD + momentum vs Adam on MNIST, seq2seq, and autoencoder demos
+- compare SGD + momentum vs Adam on the autoencoder more systematically
 
 ## Language Demos
 

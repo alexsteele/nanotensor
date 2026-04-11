@@ -86,6 +86,12 @@ Tensor *tensor_softmax(Tensor *x);
 Tensor *tensor_layernorm(Tensor *x, Tensor *gamma, Tensor *beta, float eps);
 
 Tensor *tensor_mse_loss(Tensor *pred, Tensor *target);
+/* Binary cross-entropy over probability inputs in [0, 1].
+ * References:
+ * - https://docs.pytorch.org/docs/stable/generated/torch.nn.BCELoss.html
+ * - https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.binary_cross_entropy.html
+ */
+Tensor *tensor_binary_cross_entropy(Tensor *pred_probs, Tensor *target_probs);
 Tensor *tensor_cross_entropy(Tensor *pred_probs, Tensor *target_probs);
 
 Tensor *tensor_forward(Tensor *output);

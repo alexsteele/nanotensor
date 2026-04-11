@@ -8,17 +8,28 @@
  * - Flattens each 28x28 digit into a 784-wide input vector
  * - Encodes through a hidden layer and low-dimensional latent bottleneck
  * - Decodes back to pixel space with a sigmoid reconstruction head
- * - Trains with mean-squared reconstruction loss
+ * - Trains with MSE or BCE-style reconstruction loss
  *
  * Usage:
  *   ./autoencoder [--epochs=N] [--batch=N] [--hidden=N]
- *                 [--latent=N] [--lr=FLOAT] [--log=PATH]
+ *                 [--latent=N] [--opt=momentum|adam]
+ *                 [--loss=mse|bce] [--lr=FLOAT] [--log=PATH]
  *                 [--recon=PATH]
  */
 #include <sys/time.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+typedef enum {
+    OPT_MOMENTUM = 0,
+    OPT_ADAM
+} OptimizerKind;
+
+typedef enum {
+    LOSS_MSE = 0,
+    LOSS_BCE
+} AutoencoderLossKind;
 
 /* Architecture:
  * input [batch, 784]
@@ -42,6 +53,9 @@ typedef struct {
     Tensor *b_out;
     Tensor *params[8];
     Tensor *velocity[8];
+    Tensor *adam_m1[8];
+    Tensor *adam_m2[8];
+    int adam_step;
     Tensor *tmp_enc1_lin;
     Tensor *tmp_enc1_bias;
     Tensor *tmp_enc1_act;
@@ -61,6 +75,8 @@ typedef struct {
     int batch;
     int hidden;
     int latent;
+    OptimizerKind opt_kind;
+    AutoencoderLossKind loss_kind;
     float lr;
     const char *log_path;
     const char *recon_path;
@@ -74,12 +90,31 @@ static float autoencoder_train_epoch(MnistAutoencoder *model,
                                      const MnistSet *train,
                                      const int *indices,
                                      float *batch_images,
-                                     float lr);
-static float autoencoder_eval(MnistAutoencoder *model, const MnistSet *ds, float *batch_images);
+                                     const AutoencoderOptions *opt);
+static float autoencoder_eval(MnistAutoencoder *model,
+                              const MnistSet *ds,
+                              float *batch_images,
+                              AutoencoderLossKind loss_kind);
 static void autoencoder_save_reconstructions(MnistAutoencoder *model,
                                              const MnistSet *ds,
                                              const char *path,
                                              int n_examples);
+
+static const char *optimizer_name(OptimizerKind kind) {
+    switch (kind) {
+        case OPT_MOMENTUM: return "momentum";
+        case OPT_ADAM: return "adam";
+    }
+    return "unknown";
+}
+
+static const char *loss_name(AutoencoderLossKind kind) {
+    switch (kind) {
+        case LOSS_MSE: return "mse";
+        case LOSS_BCE: return "bce";
+    }
+    return "unknown";
+}
 
 static void die(const char *msg) {
     fprintf(stderr, "%s\n", msg);
@@ -100,6 +135,8 @@ static void print_usage(const char *prog) {
     printf("  --batch=N\n");
     printf("  --hidden=N\n");
     printf("  --latent=N\n");
+    printf("  --opt=momentum|adam\n");
+    printf("  --loss=mse|bce\n");
     printf("  --lr=FLOAT\n");
     printf("  --log=PATH\n");
     printf("  --recon=PATH\n");
@@ -110,6 +147,8 @@ static void parse_args(int argc, char **argv, AutoencoderOptions *opt) {
     opt->batch = 32;
     opt->hidden = 128;
     opt->latent = 32;
+    opt->opt_kind = OPT_MOMENTUM;
+    opt->loss_kind = LOSS_MSE;
     opt->lr = 0.01f;
     opt->log_path = "out/autoencoder_training_log.csv";
     opt->recon_path = "out/autoencoder_recon.csv";
@@ -128,6 +167,18 @@ static void parse_args(int argc, char **argv, AutoencoderOptions *opt) {
             continue;
         } else if (sscanf(arg, "--latent=%d", &opt->latent) == 1) {
             continue;
+        } else if (strcmp(arg, "--opt=momentum") == 0) {
+            opt->opt_kind = OPT_MOMENTUM;
+            continue;
+        } else if (strcmp(arg, "--opt=adam") == 0) {
+            opt->opt_kind = OPT_ADAM;
+            continue;
+        } else if (strcmp(arg, "--loss=mse") == 0) {
+            opt->loss_kind = LOSS_MSE;
+            continue;
+        } else if (strcmp(arg, "--loss=bce") == 0) {
+            opt->loss_kind = LOSS_BCE;
+            continue;
         } else if (sscanf(arg, "--lr=%f", &opt->lr) == 1) {
             continue;
         } else if (strncmp(arg, "--log=", 6) == 0) {
@@ -144,7 +195,6 @@ static void print_architecture_summary(FILE *out, const MnistAutoencoder *model)
     fprintf(out, "arch: input=784 hidden=%d latent=%d\n", model->hidden, model->latent);
     fprintf(out, "arch: encoder=784->%d->%d relu\n", model->hidden, model->latent);
     fprintf(out, "arch: decoder=%d->%d->784 relu+sigmoid\n", model->latent, model->hidden);
-    fprintf(out, "arch: loss=mse over pixel reconstructions\n");
 }
 
 static void autoencoder_clear_forward_cache(MnistAutoencoder *model) {
@@ -217,10 +267,10 @@ static void autoencoder_init(MnistAutoencoder *model, const AutoencoderOptions *
 
     for (int i = 0; i < 8; i++) {
         model->velocity[i] = tensor_create(model->params[i]->rows, model->params[i]->cols, 0);
-        if (!model->velocity[i]) {
-            die("autoencoder velocity allocation failed");
-        }
+        model->adam_m1[i] = tensor_create(model->params[i]->rows, model->params[i]->cols, 0);
+        model->adam_m2[i] = tensor_create(model->params[i]->rows, model->params[i]->cols, 0);
     }
+    model->adam_step = 0;
 }
 
 static void autoencoder_free(MnistAutoencoder *model) {
@@ -231,8 +281,17 @@ static void autoencoder_free(MnistAutoencoder *model) {
     for (int i = 0; i < 8; i++) {
         tensor_free(model->params[i]);
         tensor_free(model->velocity[i]);
+        tensor_free(model->adam_m1[i]);
+        tensor_free(model->adam_m2[i]);
     }
     memset(model, 0, sizeof(*model));
+}
+
+static Tensor *autoencoder_recon_loss(Tensor *recon, Tensor *target, AutoencoderLossKind loss_kind) {
+    if (loss_kind == LOSS_BCE) {
+        return tensor_binary_cross_entropy(recon, target);
+    }
+    return tensor_mse_loss(recon, target);
 }
 
 static Tensor *autoencoder_forward(MnistAutoencoder *model, Tensor *x) {
@@ -255,7 +314,7 @@ static float autoencoder_train_epoch(MnistAutoencoder *model,
                                      const MnistSet *train,
                                      const int *indices,
                                      float *batch_images,
-                                     float lr) {
+                                     const AutoencoderOptions *opt) {
     int n_train = (train->n / model->batch) * model->batch;
     float loss_sum = 0.0f;
     int loss_count = 0;
@@ -268,10 +327,20 @@ static float autoencoder_train_epoch(MnistAutoencoder *model,
         mnist_gather_batch_images(train, indices, i, model->batch, batch_images);
         x = tensor_from_array(model->batch, MNIST_PIXELS, batch_images, 0);
         recon = autoencoder_forward(model, x);
-        loss = tensor_mse_loss(recon, x);
+        loss = autoencoder_recon_loss(recon, x, opt->loss_kind);
 
         tensor_backward(loss);
-        tensor_sgd_momentum_step(model->params, model->velocity, 8, lr, 0.9f);
+        if (opt->opt_kind == OPT_ADAM) {
+            TensorAdamOptions adam = {0};
+            adam.lr = opt->lr;
+            adam.beta1 = 0.9f;
+            adam.beta2 = 0.999f;
+            adam.eps = 1e-8f;
+            adam.timestep = ++model->adam_step;
+            tensor_adam_step(model->params, model->adam_m1, model->adam_m2, 8, &adam);
+        } else {
+            tensor_sgd_momentum_step(model->params, model->velocity, 8, opt->lr, 0.9f);
+        }
 
         loss_sum += loss->data[0];
         loss_count++;
@@ -284,7 +353,10 @@ static float autoencoder_train_epoch(MnistAutoencoder *model,
     return loss_count > 0 ? loss_sum / (float)loss_count : 0.0f;
 }
 
-static float autoencoder_eval(MnistAutoencoder *model, const MnistSet *ds, float *batch_images) {
+static float autoencoder_eval(MnistAutoencoder *model,
+                              const MnistSet *ds,
+                              float *batch_images,
+                              AutoencoderLossKind loss_kind) {
     int n_eval = (ds->n / model->batch) * model->batch;
     float loss_sum = 0.0f;
     int loss_count = 0;
@@ -299,7 +371,7 @@ static float autoencoder_eval(MnistAutoencoder *model, const MnistSet *ds, float
                sizeof(float) * (size_t)model->batch * MNIST_PIXELS);
         x = tensor_from_array(model->batch, MNIST_PIXELS, batch_images, 0);
         recon = autoencoder_forward(model, x);
-        loss = tensor_mse_loss(recon, x);
+        loss = autoencoder_recon_loss(recon, x, loss_kind);
 
         loss_sum += loss->data[0];
         loss_count++;
@@ -398,7 +470,12 @@ int main(int argc, char **argv) {
 
     printf("loaded MNIST train=%d test=%d batch=%d\n", train.n, test.n, opt.batch);
     print_architecture_summary(stdout, &model);
-    printf("opt: epochs=%d lr=%.4f recon=%s\n", opt.epochs, opt.lr, opt.recon_path);
+    printf("opt: epochs=%d lr=%.4f opt=%s loss=%s recon=%s\n",
+           opt.epochs,
+           opt.lr,
+           optimizer_name(opt.opt_kind),
+           loss_name(opt.loss_kind),
+           opt.recon_path);
 
     logf = fopen(opt.log_path, "w");
     if (!logf) {
@@ -413,8 +490,8 @@ int main(int argc, char **argv) {
         double elapsed;
 
         mnist_shuffle_indices(indices, train.n, &seed);
-        train_loss = autoencoder_train_epoch(&model, &train, indices, batch_images, opt.lr);
-        eval_loss = autoencoder_eval(&model, &test, batch_images);
+        train_loss = autoencoder_train_epoch(&model, &train, indices, batch_images, &opt);
+        eval_loss = autoencoder_eval(&model, &test, batch_images, opt.loss_kind);
         elapsed = now_seconds() - start_time;
 
         printf("epoch %3d train_loss %.6f eval_loss %.6f elapsed %.1fs\n",

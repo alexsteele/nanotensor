@@ -66,3 +66,19 @@ This first pass is intentionally small and readable:
 
 That makes it a good baseline for future comparison against deeper or more
 structured autoencoder variants.
+
+## Experiment Log
+
+### wider MLP + Adam + BCE
+
+- config:
+  `epochs=20 batch=32 hidden=256 latent=64 opt=adam loss=bce lr=0.001`
+- final result:
+  `train_loss=0.076851 eval_loss=0.079419`
+- artifact:
+  [autoencoder_adam_bce_recon.png](/Users/alex/Code/nanotensor/out/autoencoder_adam_bce_recon.png)
+- notes:
+  this is a clear qualitative improvement over the earlier MSE baseline that
+  collapsed toward a blurry average digit. Reconstructions are still soft, but
+  they now track the input class and stroke structure instead of converging on
+  a single prototype.

@@ -32,6 +32,7 @@ enum {
     OP_SOFTMAX,
     OP_LAYERNORM,
     OP_MSE,
+    OP_BINARY_CROSS_ENTROPY,
     OP_CROSS_ENTROPY
 };
 
@@ -1408,6 +1409,57 @@ static void backward_cross_entropy(Tensor *out) {
             target->grad[i] += g * (-logf(p));
         }
     }
+}
+
+static void backward_binary_cross_entropy(Tensor *out) {
+    const float eps = 1e-6f;
+    Tensor *pred = out->parents[0];
+    Tensor *target = out->parents[1];
+    int n = tensor_numel(pred);
+    float g = out->grad[0] / (float)n;
+
+    if (pred->requires_grad) {
+        ensure_grad(pred);
+        for (int i = 0; i < n; i++) {
+            float p = pred->data[i];
+            if (p < eps) p = eps;
+            if (p > 1.0f - eps) p = 1.0f - eps;
+            pred->grad[i] += g * ((1.0f - target->data[i]) / (1.0f - p) - target->data[i] / p);
+        }
+    }
+    if (target->requires_grad) {
+        ensure_grad(target);
+        for (int i = 0; i < n; i++) {
+            float p = pred->data[i];
+            if (p < eps) p = eps;
+            if (p > 1.0f - eps) p = 1.0f - eps;
+            target->grad[i] += g * (logf(1.0f - p) - logf(p));
+        }
+    }
+}
+
+Tensor *tensor_binary_cross_entropy(Tensor *pred_probs, Tensor *target_probs) {
+    const float eps = 1e-6f;
+    int n;
+    float acc = 0.0f;
+    Tensor *parents[2] = {pred_probs, target_probs};
+    int req;
+    Tensor *out;
+
+    ensure_same_shape(pred_probs, target_probs, "tensor_binary_cross_entropy: shape mismatch");
+    req = infer_requires_grad(parents, 2);
+    out = tensor_new_op(1, 1, req, OP_BINARY_CROSS_ENTROPY, parents, 2, backward_binary_cross_entropy);
+
+    n = tensor_numel(pred_probs);
+    for (int i = 0; i < n; i++) {
+        float p = pred_probs->data[i];
+        float y = target_probs->data[i];
+        if (p < eps) p = eps;
+        if (p > 1.0f - eps) p = 1.0f - eps;
+        acc += -(y * logf(p) + (1.0f - y) * logf(1.0f - p));
+    }
+    out->data[0] = acc / (float)n;
+    return out;
 }
 
 Tensor *tensor_cross_entropy(Tensor *pred_probs, Tensor *target_probs) {

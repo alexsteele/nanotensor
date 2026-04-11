@@ -324,6 +324,25 @@ static int test_softmax_cross_entropy(void) {
     return 0;
 }
 
+static int test_binary_cross_entropy(void) {
+    float pv[] = {0.8f, 0.2f};
+    float tv[] = {1.0f, 0.0f};
+    Tensor *pred = tensor_from_array(1, 2, pv, 1);
+    Tensor *target = tensor_from_array(1, 2, tv, 0);
+    Tensor *loss = tensor_binary_cross_entropy(pred, target);
+
+    tensor_backward(loss);
+
+    ASSERT_CLOSE(loss->data[0], (-(logf(0.8f) + logf(0.8f))) / 2.0f, 1e-6f);
+    ASSERT_CLOSE(pred->grad[0], -0.625f, 1e-5f);
+    ASSERT_CLOSE(pred->grad[1], 0.625f, 1e-5f);
+
+    tensor_free(pred);
+    tensor_free(target);
+    tensor_free(loss);
+    return 0;
+}
+
 static int test_pow_sqrt(void) {
     float xv[] = {2.0f};
     float tv[] = {0.0f};
@@ -580,6 +599,7 @@ int main(void) {
     if (test_pow_sqrt() != 0) return 1;
     if (test_layernorm() != 0) return 1;
     if (test_softmax_cross_entropy() != 0) return 1;
+    if (test_binary_cross_entropy() != 0) return 1;
     if (test_cmp_ops() != 0) return 1;
     if (test_backward_mse_matmul() != 0) return 1;
     if (test_adam_step() != 0) return 1;
