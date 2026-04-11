@@ -74,6 +74,10 @@ Useful metrics:
 - exact-sequence accuracy
 - periodic checkpoint logging to CSV for baseline comparison
 
+Evaluation now runs on a fixed synthetic holdout set generated once at startup.
+That makes `eval_tok` and `eval_seq` much easier to compare across checkpoints
+and across separate runs.
+
 The current trainer logs:
 
 - `step`

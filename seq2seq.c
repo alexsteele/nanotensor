@@ -77,6 +77,16 @@ typedef struct {
     int *dec_tgt_tokens;
 } Seq2SeqBatch;
 
+typedef struct {
+    int num_batches;
+    int batch_size;
+    int max_len;
+    int *seq_lens;
+    int *enc_tokens;
+    int *dec_in_tokens;
+    int *dec_tgt_tokens;
+} Seq2SeqEvalSet;
+
 static void seq2seq_print_usage(const char *prog);
 static void seq2seq_parse_args(int argc, char **argv, Seq2SeqOptions *opt);
 static void seq2seq_model_init(Seq2SeqModel *model, const Seq2SeqOptions *opt, unsigned int *seed);
@@ -84,6 +94,12 @@ static void seq2seq_model_free(Seq2SeqModel *model);
 static void seq2seq_print_architecture(const Seq2SeqModel *model);
 static void seq2seq_batch_init(Seq2SeqBatch *batch, int batch_size, int max_len);
 static void seq2seq_batch_free(Seq2SeqBatch *batch);
+static void seq2seq_eval_set_init(Seq2SeqEvalSet *eval_set,
+                                  const Seq2SeqOptions *opt,
+                                  int num_batches,
+                                  unsigned int *seed);
+static void seq2seq_eval_set_free(Seq2SeqEvalSet *eval_set);
+static void seq2seq_eval_set_load_batch(const Seq2SeqEvalSet *eval_set, int batch_index, Seq2SeqBatch *batch);
 static int seq2seq_curriculum_max_len(const Seq2SeqOptions *opt, int step);
 static void seq2seq_sample_batch(Seq2SeqBatch *batch, unsigned int *seed);
 static Tensor *seq2seq_attention_context(TensorTemps *temps,
@@ -105,7 +121,7 @@ static void seq2seq_predict_batch(Seq2SeqModel *model,
                                   int *pred_tokens);
 static void seq2seq_eval(Seq2SeqModel *model,
                          const Seq2SeqOptions *opt,
-                         unsigned int *seed,
+                         const Seq2SeqEvalSet *eval_set,
                          float *out_token_acc,
                          float *out_exact_acc);
 static void seq2seq_decode_example(Seq2SeqModel *model, int seq_len, unsigned int *seed);
@@ -349,6 +365,74 @@ static void seq2seq_batch_free(Seq2SeqBatch *batch) {
     free(batch->dec_in_tokens);
     free(batch->dec_tgt_tokens);
     memset(batch, 0, sizeof(*batch));
+}
+
+static void seq2seq_eval_set_init(Seq2SeqEvalSet *eval_set,
+                                  const Seq2SeqOptions *opt,
+                                  int num_batches,
+                                  unsigned int *seed) {
+    size_t enc_count;
+    size_t dec_count;
+    Seq2SeqBatch batch = {0};
+
+    memset(eval_set, 0, sizeof(*eval_set));
+    eval_set->num_batches = num_batches;
+    eval_set->batch_size = opt->batch;
+    eval_set->max_len = opt->max_len;
+
+    enc_count = (size_t)num_batches * (size_t)opt->batch * (size_t)opt->max_len;
+    dec_count = (size_t)num_batches * (size_t)opt->batch * (size_t)(opt->max_len + 1);
+    eval_set->seq_lens = (int *)malloc(sizeof(int) * (size_t)num_batches);
+    eval_set->enc_tokens = (int *)malloc(sizeof(int) * enc_count);
+    eval_set->dec_in_tokens = (int *)malloc(sizeof(int) * dec_count);
+    eval_set->dec_tgt_tokens = (int *)malloc(sizeof(int) * dec_count);
+    if (!eval_set->seq_lens || !eval_set->enc_tokens || !eval_set->dec_in_tokens || !eval_set->dec_tgt_tokens) {
+        die("seq2seq eval-set allocation failed");
+    }
+
+    seq2seq_batch_init(&batch, opt->batch, opt->max_len);
+    for (int i = 0; i < num_batches; i++) {
+        batch.seq_len = rand_int(seed, opt->min_len, opt->max_len);
+        seq2seq_sample_batch(&batch, seed);
+        eval_set->seq_lens[i] = batch.seq_len;
+        memcpy(eval_set->enc_tokens + (size_t)i * (size_t)opt->batch * (size_t)opt->max_len,
+               batch.enc_tokens,
+               sizeof(int) * (size_t)opt->batch * (size_t)opt->max_len);
+        memcpy(eval_set->dec_in_tokens + (size_t)i * (size_t)opt->batch * (size_t)(opt->max_len + 1),
+               batch.dec_in_tokens,
+               sizeof(int) * (size_t)opt->batch * (size_t)(opt->max_len + 1));
+        memcpy(eval_set->dec_tgt_tokens + (size_t)i * (size_t)opt->batch * (size_t)(opt->max_len + 1),
+               batch.dec_tgt_tokens,
+               sizeof(int) * (size_t)opt->batch * (size_t)(opt->max_len + 1));
+    }
+    seq2seq_batch_free(&batch);
+}
+
+static void seq2seq_eval_set_free(Seq2SeqEvalSet *eval_set) {
+    if (!eval_set) {
+        return;
+    }
+    free(eval_set->seq_lens);
+    free(eval_set->enc_tokens);
+    free(eval_set->dec_in_tokens);
+    free(eval_set->dec_tgt_tokens);
+    memset(eval_set, 0, sizeof(*eval_set));
+}
+
+static void seq2seq_eval_set_load_batch(const Seq2SeqEvalSet *eval_set, int batch_index, Seq2SeqBatch *batch) {
+    size_t enc_offset = (size_t)batch_index * (size_t)eval_set->batch_size * (size_t)eval_set->max_len;
+    size_t dec_offset = (size_t)batch_index * (size_t)eval_set->batch_size * (size_t)(eval_set->max_len + 1);
+
+    batch->seq_len = eval_set->seq_lens[batch_index];
+    memcpy(batch->enc_tokens,
+           eval_set->enc_tokens + enc_offset,
+           sizeof(int) * (size_t)eval_set->batch_size * (size_t)eval_set->max_len);
+    memcpy(batch->dec_in_tokens,
+           eval_set->dec_in_tokens + dec_offset,
+           sizeof(int) * (size_t)eval_set->batch_size * (size_t)(eval_set->max_len + 1));
+    memcpy(batch->dec_tgt_tokens,
+           eval_set->dec_tgt_tokens + dec_offset,
+           sizeof(int) * (size_t)eval_set->batch_size * (size_t)(eval_set->max_len + 1));
 }
 
 static int seq2seq_curriculum_max_len(const Seq2SeqOptions *opt, int step) {
@@ -627,10 +711,9 @@ static void seq2seq_predict_batch(Seq2SeqModel *model, const Seq2SeqBatch *batch
 
 static void seq2seq_eval(Seq2SeqModel *model,
                          const Seq2SeqOptions *opt,
-                         unsigned int *seed,
+                         const Seq2SeqEvalSet *eval_set,
                          float *out_token_acc,
                          float *out_exact_acc) {
-    const int eval_batches = 8;
     Seq2SeqBatch batch = {0};
     int *pred_tokens = (int *)malloc(sizeof(int) * (size_t)opt->batch * (size_t)(opt->max_len + 1));
     int total = 0;
@@ -643,9 +726,11 @@ static void seq2seq_eval(Seq2SeqModel *model,
         die("seq2seq eval allocation failed");
     }
 
-    for (int i = 0; i < eval_batches; i++) {
-        batch.seq_len = rand_int(seed, opt->min_len, opt->max_len);
-        seq2seq_sample_batch(&batch, seed);
+    /* Reuse the same synthetic holdout set every checkpoint so eval curves are
+     * comparable across steps and across separate runs.
+     */
+    for (int i = 0; i < eval_set->num_batches; i++) {
+        seq2seq_eval_set_load_batch(eval_set, i, &batch);
         seq2seq_predict_batch(model, &batch, pred_tokens);
 
         for (int b = 0; b < opt->batch; b++) {
@@ -717,8 +802,10 @@ int main(int argc, char **argv) {
     Seq2SeqOptions opt;
     Seq2SeqModel model;
     Seq2SeqBatch batch = {0};
+    Seq2SeqEvalSet eval_set = {0};
     FILE *logf;
     unsigned int seed = 1337u;
+    unsigned int eval_seed = 4242u;
 
     seq2seq_parse_args(argc, argv, &opt);
     if (opt.steps <= 0) opt.steps = 2000;
@@ -732,6 +819,7 @@ int main(int argc, char **argv) {
 
     seq2seq_model_init(&model, &opt, &seed);
     seq2seq_batch_init(&batch, opt.batch, opt.max_len);
+    seq2seq_eval_set_init(&eval_set, &opt, 8, &eval_seed);
 
     seq2seq_print_architecture(&model);
     printf("opt: steps=%d batch=%d min_len=%d max_len=%d\n",
@@ -740,6 +828,7 @@ int main(int argc, char **argv) {
            opt.min_len,
            opt.max_len);
     printf("opt: lr=%.4f attention=%d log=%s\n", opt.lr, opt.attention, opt.log_path);
+    printf("opt: eval=fixed_synth batches=%d seed=%u\n", eval_set.num_batches, 4242u);
     logf = fopen(opt.log_path, "w");
     if (!logf) {
         die("failed to open seq2seq log file");
@@ -756,8 +845,7 @@ int main(int argc, char **argv) {
         seq2seq_sample_batch(&batch, &seed);
         train_loss = seq2seq_train_step(&model, &opt, &batch, &seed, &token_acc);
         if (step == 1 || step % 100 == 0 || step == opt.steps) {
-            unsigned int eval_seed = 4242u + (unsigned int)step;
-            seq2seq_eval(&model, &opt, &eval_seed, &eval_token_acc, &eval_exact_acc);
+            seq2seq_eval(&model, &opt, &eval_set, &eval_token_acc, &eval_exact_acc);
             printf("step %4d len %d cur_max %d loss %.6f train_tok %.3f eval_tok %.3f eval_seq %.3f",
                    step,
                    batch.seq_len,
@@ -781,6 +869,7 @@ int main(int argc, char **argv) {
 
     fclose(logf);
     seq2seq_batch_free(&batch);
+    seq2seq_eval_set_free(&eval_set);
     seq2seq_model_free(&model);
     return 0;
 }
