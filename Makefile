@@ -35,6 +35,9 @@ skipgram: skipgram.c vocab.c vocab.h tensor.h $(LIB)
 ngram: ngram.c vocab.c vocab.h tensor.h $(LIB)
 	$(CC) $(CFLAGS) ngram.c vocab.c $(LIB) -lm -o ngram
 
+seq2seq: seq2seq.c tensor.h $(LIB)
+	$(CC) $(CFLAGS) seq2seq.c $(LIB) -lm -o seq2seq
+
 autoencoder: autoencoder.c tensor.h $(LIB)
 	$(CC) $(CFLAGS) autoencoder.c $(LIB) -lm -o autoencoder
 
@@ -59,6 +62,9 @@ run-skipgram: skipgram
 run-ngram: ngram
 	./ngram
 
+run-seq2seq: seq2seq
+	./seq2seq
+
 run-autoencoder: autoencoder
 	./autoencoder
 
@@ -76,12 +82,12 @@ plot-autoencoder:
 
 rebuild:
 	$(MAKE) clean
-	$(MAKE) all llm skipgram ngram autoencoder mnist-conv tensor_test
+	$(MAKE) all llm skipgram ngram seq2seq autoencoder mnist-conv tensor_test
 
 run-shakespeare:
 	./scripts/run_shakespeare_llm.sh
 
 clean:
-	rm -f demo llm skipgram ngram autoencoder mnist_conv_demo tensor_test $(OBJ) $(LIB) tensor_test_single.bin tensor_test_snapshot.bin
+	rm -f demo llm skipgram ngram seq2seq autoencoder mnist_conv_demo tensor_test $(OBJ) $(LIB) tensor_test_single.bin tensor_test_snapshot.bin
 
-.PHONY: all static test run run-llm run-skipgram run-ngram run-autoencoder run-mnist-conv mnist-data plot-loss plot-autoencoder rebuild run-shakespeare clean
+.PHONY: all static test run run-llm run-skipgram run-ngram run-seq2seq run-autoencoder run-mnist-conv mnist-data plot-loss plot-autoencoder rebuild run-shakespeare clean

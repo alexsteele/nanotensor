@@ -23,6 +23,7 @@ make run         # runs the demo training program
 make rebuild     # forces a clean rebuild of all binaries for this machine
 make mnist-data  # downloads and unpacks raw MNIST IDX files into data/mnist
 make ngram       # builds the neural word-level n-gram demo
+make seq2seq     # builds the seq2seq scaffold demo
 make autoencoder # builds the MNIST autoencoder demo
 ```
 
@@ -206,6 +207,28 @@ small reconstruction dump CSV that can be rendered to a PNG grid:
 ```bash
 make plot-autoencoder RECON=out/autoencoder_recon.csv RECON_OUT=out/autoencoder_recon.png
 ```
+
+## Seq2Seq Demo
+
+`seq2seq.c` is the start of a minimal encoder-decoder demo for a synthetic
+digit-sequence reversal task.
+
+The planned first version is:
+
+- tiny vocabulary with digits plus `BOS` / `EOS`
+- tanh RNN encoder
+- tanh RNN decoder
+- no attention yet
+
+Build and run:
+
+```bash
+make seq2seq
+./seq2seq --steps=2000 --batch=32 --embed=16 --hidden=32 --min-len=3 --max-len=8 --lr=0.03
+```
+
+The current code is a scaffold that initializes the model and prints the
+intended architecture. The design note lives in `docs/seq2seq.md`.
 
 ## MNIST Conv Demo (MVP)
 
