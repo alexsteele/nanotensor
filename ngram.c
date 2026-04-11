@@ -34,6 +34,7 @@ typedef struct {
     int vocab_limit;
     char snapshot_path[1024];
     char vocab_out_path[1024];
+    char report_path[1024];
 } NGramOptions;
 
 typedef struct {
@@ -88,6 +89,7 @@ static void print_usage(const char *prog) {
     printf("  --vocab=N\n");
     printf("  --snapshot=PATH\n");
     printf("  --vocab-out=PATH\n");
+    printf("  --report=PATH\n");
 }
 
 static void parse_args(int argc, char **argv, NGramOptions *opt) {
@@ -101,6 +103,7 @@ static void parse_args(int argc, char **argv, NGramOptions *opt) {
     opt->vocab_limit = DEFAULT_VOCAB;
     snprintf(opt->snapshot_path, sizeof(opt->snapshot_path), "%s", "out/ngram_snapshot.bin");
     snprintf(opt->vocab_out_path, sizeof(opt->vocab_out_path), "%s", "out/ngram_vocab.txt");
+    snprintf(opt->report_path, sizeof(opt->report_path), "%s", "out/ngram_report.txt");
 
     for (int i = 1; i < argc; i++) {
         const char *arg = argv[i];
@@ -127,6 +130,8 @@ static void parse_args(int argc, char **argv, NGramOptions *opt) {
         } else if (sscanf(arg, "--snapshot=%1023s", opt->snapshot_path) == 1) {
             continue;
         } else if (sscanf(arg, "--vocab-out=%1023s", opt->vocab_out_path) == 1) {
+            continue;
+        } else if (sscanf(arg, "--report=%1023s", opt->report_path) == 1) {
             continue;
         } else {
             fprintf(stderr, "unknown option: %s\n", arg);
@@ -374,7 +379,11 @@ static float ngram_eval(NGramModel *model, const int *tokens, int n_tokens, int 
     return batches > 0 ? total_loss / (float)batches : -1.0f;
 }
 
-static void ngram_predict_topk(NGramModel *model, const EncodedCorpus *corpus, const char *prompt, int top_k) {
+static void ngram_write_topk(FILE *out,
+                             NGramModel *model,
+                             const EncodedCorpus *corpus,
+                             const char *prompt,
+                             int top_k) {
     int ids[16];
     int n_ids = vocab_encode_prompt(corpus, prompt, ids, 16);
     int context_ids[16];
@@ -387,6 +396,7 @@ static void ngram_predict_topk(NGramModel *model, const EncodedCorpus *corpus, c
         top_k = 8;
     }
     if (n_ids < model->context) {
+        fprintf(out, "%s -> <need %d in-vocab words>\n", prompt, model->context);
         return;
     }
     for (int i = 0; i < model->context; i++) {
@@ -419,25 +429,33 @@ static void ngram_predict_topk(NGramModel *model, const EncodedCorpus *corpus, c
         }
     }
 
-    printf("%s ->", prompt);
+    fprintf(out, "%s ->", prompt);
     for (int i = 0; i < top_k; i++) {
         if (best_id[i] >= 0) {
-            printf(" %s(%.2f)", corpus->entries[best_id[i]].word, best_prob[i]);
+            fprintf(out, " %s(%.2f)", corpus->entries[best_id[i]].word, best_prob[i]);
         }
     }
-    printf("\n");
+    fprintf(out, "\n");
 
     tensor_free(probs);
     ngram_clear_forward_temps(model);
 }
 
-static void ngram_generate_sample(NGramModel *model, const EncodedCorpus *corpus, const char *prompt, int length) {
+static void ngram_predict_topk(NGramModel *model, const EncodedCorpus *corpus, const char *prompt, int top_k) {
+    ngram_write_topk(stdout, model, corpus, prompt, top_k);
+}
+
+static void ngram_write_sample(FILE *out,
+                               NGramModel *model,
+                               const EncodedCorpus *corpus,
+                               const char *prompt,
+                               int length) {
     int ids[128];
     int n_ids = vocab_encode_prompt(corpus, prompt, ids, 128);
 
-    printf("sample: %s", prompt);
+    fprintf(out, "sample: %s", prompt);
     if (n_ids < model->context) {
-        printf(" ... (need %d in-vocab prompt words)\n", model->context);
+        fprintf(out, " ... (need %d in-vocab prompt words)\n", model->context);
         return;
     }
 
@@ -454,12 +472,43 @@ static void ngram_generate_sample(NGramModel *model, const EncodedCorpus *corpus
         probs = tensor_softmax(logits);
         next_id = tensor_argmax_row(probs, 0);
         ids[n_ids++] = next_id;
-        printf(" %s", corpus->entries[next_id].word);
+        fprintf(out, " %s", corpus->entries[next_id].word);
 
         tensor_free(probs);
         ngram_clear_forward_temps(model);
     }
-    printf("\n");
+    fprintf(out, "\n");
+}
+
+static void ngram_generate_sample(NGramModel *model, const EncodedCorpus *corpus, const char *prompt, int length) {
+    ngram_write_sample(stdout, model, corpus, prompt, length);
+}
+
+static void ngram_write_report(const char *path,
+                               NGramModel *model,
+                               const EncodedCorpus *corpus,
+                               float eval_loss) {
+    FILE *out = fopen(path, "w");
+
+    if (!out) {
+        fprintf(stderr, "failed to open report '%s'\n", path);
+        return;
+    }
+
+    fprintf(out, "ngram qualitative report\n");
+    fprintf(out, "vocab=%d context=%d embed=%d hidden=%d\n", corpus->vocab, model->context, model->embed, model->hidden);
+    if (eval_loss > 0.0f) {
+        fprintf(out, "eval_loss=%.6f ppl=%.2f\n", eval_loss, expf(eval_loss));
+    }
+    fprintf(out, "\n--- predictions ---\n");
+    ngram_write_topk(out, model, corpus, "to be or", 5);
+    ngram_write_topk(out, model, corpus, "my lord i", 5);
+    ngram_write_topk(out, model, corpus, "i will not", 5);
+    ngram_write_topk(out, model, corpus, "for the king", 5);
+    fprintf(out, "\n--- generation ---\n");
+    ngram_write_sample(out, model, corpus, "to be or", 12);
+    ngram_write_sample(out, model, corpus, "my lord i", 12);
+    fclose(out);
 }
 
 int main(int argc, char **argv) {
@@ -575,6 +624,11 @@ int main(int argc, char **argv) {
         }
     }
 
+    {
+        float final_eval_loss = ngram_eval(&model, eval_data, eval_tokens, opt.batch, opt.context);
+        ngram_write_report(opt.report_path, &model, &corpus, final_eval_loss);
+    }
+
     printf("\n--- predictions ---\n");
     ngram_predict_topk(&model, &corpus, "to be or", 5);
     ngram_predict_topk(&model, &corpus, "my lord i", 5);
@@ -604,6 +658,7 @@ int main(int argc, char **argv) {
     }
     printf("\nsaved snapshot: %s\n", opt.snapshot_path);
     printf("saved vocab: %s\n", opt.vocab_out_path);
+    printf("saved report: %s\n", opt.report_path);
 
     ngram_free(&model);
     free(context_ids);

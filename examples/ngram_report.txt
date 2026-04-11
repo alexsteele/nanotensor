@@ -1,0 +1,13 @@
+ngram qualitative report
+vocab=1000 context=3 embed=32 hidden=64
+eval_loss=5.887973 ppl=360.67
+
+--- predictions ---
+to be or -> and(0.04) the(0.03) i(0.03) to(0.03) a(0.02)
+my lord i -> and(0.04) the(0.03) i(0.03) to(0.03) a(0.02)
+i will not -> and(0.04) the(0.04) i(0.03) to(0.03) a(0.02)
+for the king -> and(0.04) the(0.03) i(0.03) to(0.03) a(0.02)
+
+--- generation ---
+sample: to be or and and and and and and and and and and and and
+sample: my lord i and and and and and and and and and and and and

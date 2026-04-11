@@ -1,0 +1,11 @@
+seq2seq qualitative eval
+steps=2000 batch=32 embed=16 hidden=32 attention=1 opt=adam lr=0.0030
+
+123 -> pred 321      target 321      OK
+5087 -> pred 7805     target 7805     OK
+90012 -> pred 09009    target 21009    MISS
+314159 -> pred 001413   target 951413   MISS
+271828 -> pred 888172   target 828172   MISS
+404 -> pred 404      target 404      OK
+1007 -> pred 0001     target 7001     MISS
+98765432 -> pred 5306789  target 23456789 MISS

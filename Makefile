@@ -87,7 +87,10 @@ rebuild:
 run-shakespeare:
 	./scripts/run_shakespeare_llm.sh
 
+examples: autoencoder seq2seq skipgram ngram mnist-conv
+	PYTHON=$(PYTHON) ./scripts/run_examples.sh
+
 clean:
 	rm -f demo llm skipgram ngram seq2seq autoencoder mnist_conv_demo tensor_test $(OBJ) $(LIB) tensor_test_single.bin tensor_test_snapshot.bin
 
-.PHONY: all static test run run-llm run-skipgram run-ngram run-seq2seq run-autoencoder run-mnist-conv mnist-data plot-loss plot-autoencoder rebuild run-shakespeare clean
+.PHONY: all static test run run-llm run-skipgram run-ngram run-seq2seq run-autoencoder run-mnist-conv mnist-data plot-loss plot-autoencoder rebuild run-shakespeare examples clean

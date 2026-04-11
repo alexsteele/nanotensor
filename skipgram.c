@@ -41,11 +41,27 @@ typedef struct {
     int vocab_limit;
     char snapshot_path[1024];
     char vocab_out_path[1024];
+    char report_path[1024];
 } SkipGramOptions;
 
 static float rand_uniform(unsigned int *seed) {
     *seed = (1103515245U * (*seed) + 12345U);
     return (float)((*seed) & 0x7fffffffU) / 2147483648.0f;
+}
+
+static int word_eq_nocase(const char *a, const char *b) {
+    while (*a && *b) {
+        char ca = *a;
+        char cb = *b;
+        if (ca >= 'A' && ca <= 'Z') ca = (char)(ca - 'A' + 'a');
+        if (cb >= 'A' && cb <= 'Z') cb = (char)(cb - 'A' + 'a');
+        if (ca != cb) {
+            return 0;
+        }
+        a++;
+        b++;
+    }
+    return *a == '\0' && *b == '\0';
 }
 
 static void print_usage(const char *prog) {
@@ -59,6 +75,7 @@ static void print_usage(const char *prog) {
     printf("  --vocab=N\n");
     printf("  --snapshot=PATH\n");
     printf("  --vocab-out=PATH\n");
+    printf("  --report=PATH\n");
 }
 
 static void parse_args(int argc, char **argv, SkipGramOptions *opt) {
@@ -71,6 +88,7 @@ static void parse_args(int argc, char **argv, SkipGramOptions *opt) {
     opt->vocab_limit = DEFAULT_VOCAB;
     snprintf(opt->snapshot_path, sizeof(opt->snapshot_path), "%s", "out/skipgram_snapshot.bin");
     snprintf(opt->vocab_out_path, sizeof(opt->vocab_out_path), "%s", "out/skipgram_vocab.txt");
+    snprintf(opt->report_path, sizeof(opt->report_path), "%s", "out/skipgram_neighbors.txt");
 
     for (int i = 1; i < argc; i++) {
         const char *arg = argv[i];
@@ -95,6 +113,8 @@ static void parse_args(int argc, char **argv, SkipGramOptions *opt) {
         } else if (sscanf(arg, "--snapshot=%1023s", opt->snapshot_path) == 1) {
             continue;
         } else if (sscanf(arg, "--vocab-out=%1023s", opt->vocab_out_path) == 1) {
+            continue;
+        } else if (sscanf(arg, "--report=%1023s", opt->report_path) == 1) {
             continue;
         } else {
             fprintf(stderr, "unknown option: %s\n", arg);
@@ -164,7 +184,11 @@ static float norm_row(const float *a, int n) {
     return sqrtf(sum > 1e-12f ? sum : 1e-12f);
 }
 
-static void print_nearest_neighbors(SkipGramModel *model, const EncodedCorpus *corpus, const char *word, int k) {
+static void write_nearest_neighbors(FILE *out,
+                                    SkipGramModel *model,
+                                    const EncodedCorpus *corpus,
+                                    const char *word,
+                                    int k) {
     int id = vocab_id_for_word(corpus, word);
     float best_score[8];
     int best_id[8];
@@ -176,6 +200,7 @@ static void print_nearest_neighbors(SkipGramModel *model, const EncodedCorpus *c
         k = 8;
     }
     if (id < 0) {
+        fprintf(out, "%s: <not in vocab>\n", word);
         return;
     }
 
@@ -213,13 +238,48 @@ static void print_nearest_neighbors(SkipGramModel *model, const EncodedCorpus *c
         }
     }
 
-    printf("%s:", word);
+    fprintf(out, "%s:", word);
     for (int i = 0; i < k; i++) {
         if (best_id[i] >= 0) {
-            printf(" %s(%.2f)", corpus->entries[best_id[i]].word, best_score[i]);
+            fprintf(out, " %s(%.2f)", corpus->entries[best_id[i]].word, best_score[i]);
         }
     }
-    printf("\n");
+    fprintf(out, "\n");
+}
+
+static void print_nearest_neighbors(SkipGramModel *model, const EncodedCorpus *corpus, const char *word, int k) {
+    write_nearest_neighbors(stdout, model, corpus, word, k);
+}
+
+static void write_skipgram_report(const char *path, SkipGramModel *model, const EncodedCorpus *corpus) {
+    static const char *queries[] = {"king", "queen", "love", "death", "man", "woman"};
+    FILE *out = fopen(path, "w");
+
+    if (!out) {
+        fprintf(stderr, "failed to open report '%s'\n", path);
+        return;
+    }
+
+    fprintf(out, "skipgram nearest neighbors\n");
+    fprintf(out, "vocab=%d embed=%d\n\n", corpus->vocab, model->embed);
+    for (size_t i = 0; i < sizeof(queries) / sizeof(queries[0]); i++) {
+        write_nearest_neighbors(out, model, corpus, queries[i], 5);
+    }
+    fprintf(out, "\nkept vocab examples:\n");
+    {
+        int shown = 0;
+        for (int i = 0; i < corpus->vocab && shown < 12; i++) {
+            const char *word = corpus->entries[i].word;
+            if (word_eq_nocase(word, "king") || word_eq_nocase(word, "queen") || word_eq_nocase(word, "love") ||
+                word_eq_nocase(word, "death") || word_eq_nocase(word, "man") || word_eq_nocase(word, "woman")) {
+                continue;
+            }
+            fprintf(out, "%s%s", shown == 0 ? "" : " ", word);
+            shown++;
+        }
+        fprintf(out, "\n");
+    }
+    fclose(out);
 }
 
 int main(int argc, char **argv) {
@@ -338,8 +398,10 @@ int main(int argc, char **argv) {
         free(text);
         return 1;
     }
+    write_skipgram_report(opt.report_path, &model, &corpus);
     printf("\nsaved snapshot: %s\n", opt.snapshot_path);
     printf("saved vocab: %s\n", opt.vocab_out_path);
+    printf("saved report: %s\n", opt.report_path);
 
     skipgram_free(&model);
     free(center_idx);

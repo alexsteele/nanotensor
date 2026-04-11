@@ -25,7 +25,24 @@ make mnist-data  # downloads and unpacks raw MNIST IDX files into data/mnist
 make ngram       # builds the neural word-level n-gram demo
 make seq2seq     # builds the seq2seq reversal demo
 make autoencoder # builds the MNIST autoencoder demo
+make examples    # regenerates the demo artifacts under examples/
 ```
+
+## Example Artifacts
+
+The repo keeps a few human-friendly demo outputs in `examples/`, including the
+autoencoder reconstruction panel, seq2seq qualitative predictions, skip-gram
+nearest neighbors, the n-gram text report, and the MNIST loss plot.
+
+To regenerate them end-to-end:
+
+```bash
+make examples
+```
+
+That target builds the needed binaries and then runs
+[`scripts/run_examples.sh`](/Users/alex/Code/nanotensor/scripts/run_examples.sh)
+to refresh the checked-in example artifacts from fresh outputs in `out/`.
 
 ## Example
 

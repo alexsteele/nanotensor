@@ -1,0 +1,12 @@
+skipgram nearest neighbors
+vocab=800 embed=32
+
+king: she(0.97) by(0.97) upon(0.97) now(0.96) give(0.96)
+queen: may(0.85) she(0.84) mine(0.84) these(0.83) than(0.83)
+love: thee(0.97) may(0.97) from(0.97) this(0.97) go(0.97)
+death: d(0.95) very(0.95) so(0.94) had(0.94) must(0.94)
+man: time(0.96) had(0.96) s(0.95) hamlet(0.95) like(0.95)
+woman: now(0.93) were(0.93) they(0.92) at(0.92) which(0.91)
+
+kept vocab examples:
+the and i to of a you my in that is it

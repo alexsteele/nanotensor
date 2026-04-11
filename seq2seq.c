@@ -42,6 +42,7 @@ typedef struct {
     OptimizerKind opt_kind;
     float lr;
     const char *log_path;
+    const char *report_path;
 } Seq2SeqOptions;
 
 /* Architecture:
@@ -144,6 +145,7 @@ static void seq2seq_eval(Seq2SeqModel *model,
                          float *out_token_acc,
                          float *out_exact_acc);
 static void seq2seq_decode_example(Seq2SeqModel *model, int seq_len, unsigned int *seed);
+static void seq2seq_write_report(Seq2SeqModel *model, const Seq2SeqOptions *opt);
 
 static const char *optimizer_name(OptimizerKind kind) {
     switch (kind) {
@@ -261,6 +263,7 @@ static void seq2seq_print_usage(const char *prog) {
     printf("  --attention=0|1\n");
     printf("  --opt=momentum|adam\n");
     printf("  --log=PATH\n");
+    printf("  --report=PATH\n");
 }
 
 static void seq2seq_parse_args(int argc, char **argv, Seq2SeqOptions *opt) {
@@ -274,6 +277,7 @@ static void seq2seq_parse_args(int argc, char **argv, Seq2SeqOptions *opt) {
     opt->opt_kind = OPT_MOMENTUM;
     opt->lr = 0.03f;
     opt->log_path = "out/seq2seq_training_log.csv";
+    opt->report_path = "out/seq2seq_report.txt";
 
     for (int i = 1; i < argc; i++) {
         const char *arg = argv[i];
@@ -305,6 +309,8 @@ static void seq2seq_parse_args(int argc, char **argv, Seq2SeqOptions *opt) {
             continue;
         } else if (strncmp(arg, "--log=", 6) == 0) {
             opt->log_path = argv[i] + 6;
+        } else if (strncmp(arg, "--report=", 9) == 0) {
+            opt->report_path = argv[i] + 9;
         } else {
             die("unknown option");
         }
@@ -847,6 +853,70 @@ static void seq2seq_decode_example(Seq2SeqModel *model, int seq_len, unsigned in
     free(tgt_tokens);
 }
 
+static void seq2seq_write_one_case(FILE *out, Seq2SeqModel *model, const char *digits) {
+    Seq2SeqBatch batch = {0};
+    int len = (int)strlen(digits);
+    int *pred_tokens;
+    int *tgt_tokens;
+    char pred[64];
+    char tgt[64];
+
+    if (len <= 0 || len > 32) {
+        return;
+    }
+
+    seq2seq_batch_init(&batch, 1, len);
+    batch.seq_len = len;
+    pred_tokens = (int *)malloc(sizeof(int) * (size_t)(len + 1));
+    tgt_tokens = (int *)malloc(sizeof(int) * (size_t)(len + 1));
+
+    for (int t = 0; t < len; t++) {
+        batch.enc_tokens[t] = digits[t] - '0';
+    }
+    seq2seq_predict_batch(model, &batch, pred_tokens);
+
+    for (int t = 0; t < len; t++) {
+        tgt_tokens[t] = batch.enc_tokens[len - 1 - t];
+    }
+    tgt_tokens[len] = EOS_TOKEN;
+    tokens_to_string(tgt_tokens, len + 1, tgt, sizeof(tgt));
+    tokens_to_string(pred_tokens, len + 1, pred, sizeof(pred));
+    fprintf(out, "%s -> pred %-8s target %-8s %s\n",
+            digits,
+            pred,
+            tgt,
+            strcmp(pred, tgt) == 0 ? "OK" : "MISS");
+
+    seq2seq_batch_free(&batch);
+    free(pred_tokens);
+    free(tgt_tokens);
+}
+
+static void seq2seq_write_report(Seq2SeqModel *model, const Seq2SeqOptions *opt) {
+    static const char *cases[] = {"123", "5087", "90012", "314159", "271828", "404", "1007", "98765432"};
+    FILE *out = fopen(opt->report_path, "w");
+
+    if (!out) {
+        fprintf(stderr, "failed to open seq2seq report '%s'\n", opt->report_path);
+        return;
+    }
+
+    fprintf(out, "seq2seq qualitative eval\n");
+    fprintf(out,
+            "steps=%d batch=%d embed=%d hidden=%d attention=%d opt=%s lr=%.4f\n\n",
+            opt->steps,
+            opt->batch,
+            opt->embed,
+            opt->hidden,
+            opt->attention,
+            optimizer_name(opt->opt_kind),
+            opt->lr);
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        seq2seq_write_one_case(out, model, cases[i]);
+    }
+    fclose(out);
+}
+
 int main(int argc, char **argv) {
     Seq2SeqOptions opt;
     Seq2SeqModel model;
@@ -921,6 +991,8 @@ int main(int argc, char **argv) {
     }
 
     fclose(logf);
+    seq2seq_write_report(&model, &opt);
+    printf("saved report: %s\n", opt.report_path);
     seq2seq_batch_free(&batch);
     seq2seq_eval_set_free(&eval_set);
     seq2seq_model_free(&model);
