@@ -102,13 +102,8 @@ Track one short entry per meaningful run keyed by git commit.
 
 - config:
   `steps=9 batch=4 embed=8 hidden=16 min_len=3 max_len=8 lr=0.03`
-- curriculum:
-  early checkpoint sampled with `curriculum_max_len=4`, final checkpoint with
-  `curriculum_max_len=8`
-- checkpoint metrics:
-  step `1`: `train_loss=2.484628 train_tok=0.250000 eval_tok=0.168269 eval_seq=0.000000`
-- checkpoint metrics:
-  step `9`: `train_loss=2.464005 train_tok=0.125000 eval_tok=0.181818 eval_seq=0.000000`
+- result:
+  `step=9 train_loss=2.464005 train_tok=0.125000 eval_tok=0.181818 eval_seq=0.000000`
 - sample:
   `290 -> 0000 (target 092)`
 - sample:
@@ -122,8 +117,8 @@ Track one short entry per meaningful run keyed by git commit.
 
 - config:
   `attention=1 steps=2000 len=8 cur_max=8`
-- checkpoint metrics:
-  step `2000`: `train_loss=2.080554 train_tok=0.219000 eval_tok=0.331000 eval_seq=0.000000`
+- result:
+  `step=2000 train_loss=2.080554 train_tok=0.219000 eval_tok=0.331000 eval_seq=0.000000`
 - sample:
   `18955654 -> 8888000 (target 45655981)`
 - notes:
@@ -131,6 +126,25 @@ Track one short entry per meaningful run keyed by git commit.
   reversal is still far from solved at 2000 steps; exact-sequence accuracy
   remained at zero and the sample output still collapses toward repeated digits
   instead of a faithful reversed copy
+
+### attention run near 10000 steps
+
+- config:
+  `attention=1 steps=10000 max_len=8`
+- result:
+  `step=10000 train_loss=1.021648 train_tok=0.656000 eval_tok=0.560000 eval_seq=0.004000`
+- sample:
+  `095 -> 590 (target 590)`
+- sample:
+  `0215168 -> 2226120 (target 8615120)`
+- sample:
+  `6685 -> 6666 (target 5866)`
+- notes:
+  by 10K steps the attention model is clearly learning partial reversal and
+  often gets prefixes or suffixes right, with eval token accuracy around
+  `0.55-0.62`. Exact-sequence accuracy is still low and noisy, which suggests
+  the model is not yet consistently binding each output position to the correct
+  source position, especially on longer sequences and repeated digits.
 
 ## Scope Boundaries
 
