@@ -7,13 +7,15 @@
  * - Trains on a synthetic digit-sequence translation task
  * - Learns to map each input digit string to its reversed output string
  * - Uses a tanh RNN encoder and tanh RNN decoder over a tiny BOS/EOS vocabulary
- * - Keeps the first version intentionally small and readable
+ * - Can optionally add dot-product attention over encoder states
+ * - Keeps the code intentionally small and readable
  *
  * Usage:
  *   ./seq2seq [--steps=N] [--batch=N] [--embed=N]
  *             [--hidden=N] [--lr=FLOAT] [--min-len=N]
- *             [--max-len=N] [--log=PATH]
+ *             [--max-len=N] [--attention=0|1] [--log=PATH]
  */
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -30,6 +32,7 @@ typedef struct {
     int hidden;
     int min_len;
     int max_len;
+    int attention;
     float lr;
     const char *log_path;
 } Seq2SeqOptions;
@@ -40,11 +43,13 @@ typedef struct {
  * -> encoder tanh RNN hidden states [seq, hidden]
  * -> final encoder hidden initializes decoder state
  * -> decoder tanh RNN unrolled with teacher forcing
+ * -> optional dot attention over encoder states [seq, hidden]
  * -> vocab logits per output position [seq + 1, vocab]
  */
 typedef struct {
     int embed;
     int hidden;
+    int attention;
     Tensor *E;
     Tensor *W_enc_x;
     Tensor *W_enc_h;
@@ -81,6 +86,15 @@ static void seq2seq_batch_init(Seq2SeqBatch *batch, int batch_size, int max_len)
 static void seq2seq_batch_free(Seq2SeqBatch *batch);
 static int seq2seq_curriculum_max_len(const Seq2SeqOptions *opt, int step);
 static void seq2seq_sample_batch(Seq2SeqBatch *batch, unsigned int *seed);
+static Tensor *seq2seq_attention_context(TensorTemps *temps,
+                                         Seq2SeqModel *model,
+                                         Tensor **enc_states,
+                                         int src_len,
+                                         Tensor *dec_h);
+static Tensor *seq2seq_project_logits(TensorTemps *temps,
+                                      Seq2SeqModel *model,
+                                      Tensor *dec_h,
+                                      Tensor *context);
 static float seq2seq_train_step(Seq2SeqModel *model,
                                 const Seq2SeqOptions *opt,
                                 const Seq2SeqBatch *batch,
@@ -201,6 +215,7 @@ static void seq2seq_print_usage(const char *prog) {
     printf("  --lr=FLOAT\n");
     printf("  --min-len=N\n");
     printf("  --max-len=N\n");
+    printf("  --attention=0|1\n");
     printf("  --log=PATH\n");
 }
 
@@ -211,6 +226,7 @@ static void seq2seq_parse_args(int argc, char **argv, Seq2SeqOptions *opt) {
     opt->hidden = 32;
     opt->min_len = 3;
     opt->max_len = 8;
+    opt->attention = 0;
     opt->lr = 0.03f;
     opt->log_path = "out/seq2seq_training_log.csv";
 
@@ -234,6 +250,8 @@ static void seq2seq_parse_args(int argc, char **argv, Seq2SeqOptions *opt) {
             continue;
         } else if (sscanf(arg, "--max-len=%d", &opt->max_len) == 1) {
             continue;
+        } else if (sscanf(arg, "--attention=%d", &opt->attention) == 1) {
+            continue;
         } else if (strncmp(arg, "--log=", 6) == 0) {
             opt->log_path = argv[i] + 6;
         } else {
@@ -246,6 +264,7 @@ static void seq2seq_model_init(Seq2SeqModel *model, const Seq2SeqOptions *opt, u
     memset(model, 0, sizeof(*model));
     model->embed = opt->embed;
     model->hidden = opt->hidden;
+    model->attention = opt->attention ? 1 : 0;
 
     model->E = tensor_create(VOCAB_SIZE, opt->embed, 1);
     model->W_enc_x = tensor_create(opt->embed, opt->hidden, 1);
@@ -254,7 +273,7 @@ static void seq2seq_model_init(Seq2SeqModel *model, const Seq2SeqOptions *opt, u
     model->W_dec_x = tensor_create(opt->embed, opt->hidden, 1);
     model->W_dec_h = tensor_create(opt->hidden, opt->hidden, 1);
     model->b_dec = tensor_create(1, opt->hidden, 1);
-    model->W_out = tensor_create(opt->hidden, VOCAB_SIZE, 1);
+    model->W_out = tensor_create(opt->attention ? (2 * opt->hidden) : opt->hidden, VOCAB_SIZE, 1);
     model->b_out = tensor_create(1, VOCAB_SIZE, 1);
 
     if (!model->E || !model->W_enc_x || !model->W_enc_h || !model->b_enc || !model->W_dec_x ||
@@ -306,7 +325,9 @@ static void seq2seq_print_architecture(const Seq2SeqModel *model) {
     printf("arch: task=reverse digit sequences with BOS/EOS\n");
     printf("arch: encoder=tanh_rnn decoder=tanh_rnn\n");
     printf("arch: bridge=final_encoder_hidden -> decoder_h0\n");
-    printf("arch: output=decoder_hidden -> vocab logits\n");
+    printf("arch: attention=%s\n", model->attention ? "dot over encoder states" : "off");
+    printf("arch: output=%s\n",
+           model->attention ? "[decoder_hidden, context] -> vocab logits" : "decoder_hidden -> vocab logits");
 }
 
 static void seq2seq_batch_init(Seq2SeqBatch *batch, int batch_size, int max_len) {
@@ -373,6 +394,83 @@ static void seq2seq_sample_batch(Seq2SeqBatch *batch, unsigned int *seed) {
     }
 }
 
+static Tensor *seq2seq_attention_context(TensorTemps *temps,
+                                         Seq2SeqModel *model,
+                                         Tensor **enc_states,
+                                         int src_len,
+                                         Tensor *dec_h) {
+    Tensor *scores = NULL;
+    Tensor *weights;
+    Tensor *context = NULL;
+    const float scale = 1.0f / sqrtf((float)model->hidden);
+
+    /* Attention scores compare the current decoder state against each encoder
+     * hidden state, then softmax turns those scores into a distribution over
+     * source positions.
+     */
+    for (int t = 0; t < src_len; t++) {
+        Tensor *prod = tensor_mul_elem(dec_h, enc_states[t]);
+        Tensor *score_mean = tensor_mean_axis(prod, 1);
+        Tensor *score = score_mean;
+        if (scale != 1.0f) {
+            score = tensor_scalar_mul(score_mean, scale);
+            temps_push(temps, prod);
+            temps_push(temps, score_mean);
+            temps_push(temps, score);
+        } else {
+            temps_push(temps, prod);
+            temps_push(temps, score);
+        }
+
+        if (!scores) {
+            scores = score;
+        } else {
+            scores = tensor_concat_cols(scores, score);
+            temps_push(temps, scores);
+        }
+    }
+
+    weights = tensor_softmax(scores);
+    temps_push(temps, weights);
+
+    /* Weighted sum of encoder states gives the context vector consumed by the
+     * output projection for this decoder step.
+     */
+    for (int t = 0; t < src_len; t++) {
+        Tensor *weight_col = tensor_slice(weights, 0, weights->rows, t, t + 1);
+        Tensor *weighted_state = tensor_mul_broadcast(enc_states[t], weight_col);
+
+        temps_push(temps, weight_col);
+        temps_push(temps, weighted_state);
+        if (!context) {
+            context = weighted_state;
+        } else {
+            context = tensor_add(context, weighted_state);
+            temps_push(temps, context);
+        }
+    }
+    return context;
+}
+
+static Tensor *seq2seq_project_logits(TensorTemps *temps,
+                                      Seq2SeqModel *model,
+                                      Tensor *dec_h,
+                                      Tensor *context) {
+    Tensor *features = dec_h;
+    Tensor *out_lin;
+    Tensor *logits;
+
+    if (model->attention) {
+        features = tensor_concat_cols(dec_h, context);
+        temps_push(temps, features);
+    }
+    out_lin = tensor_matmul(features, model->W_out);
+    logits = tensor_add_bias(out_lin, model->b_out);
+    temps_push(temps, out_lin);
+    temps_push(temps, logits);
+    return logits;
+}
+
 static float seq2seq_train_step(Seq2SeqModel *model,
                                 const Seq2SeqOptions *opt,
                                 const Seq2SeqBatch *batch,
@@ -380,11 +478,15 @@ static float seq2seq_train_step(Seq2SeqModel *model,
                                 float *out_token_acc) {
     TensorTemps temps = {0};
     Tensor *h = tensor_create(opt->batch, model->hidden, 0);
+    Tensor **enc_states = (Tensor **)malloc(sizeof(Tensor *) * (size_t)batch->seq_len);
     Tensor *total_loss = NULL;
     int total = 0;
     int correct = 0;
 
     (void)seed;
+    if (!h || !enc_states) {
+        die("seq2seq train allocation failed");
+    }
     tensor_fill(h, 0.0f);
     temps_push(&temps, h);
 
@@ -400,10 +502,12 @@ static float seq2seq_train_step(Seq2SeqModel *model,
                              model->W_enc_x,
                              model->W_enc_h,
                              model->b_enc);
+        enc_states[t] = h;
     }
 
     /* Decode with teacher forcing: each decoder step consumes the previous
-     * ground-truth output token and predicts the next target token.
+     * ground-truth output token and predicts the next target token. With
+     * attention enabled, each decoder step also re-reads the encoder states.
      */
     for (int t = 0; t < batch->seq_len + 1; t++) {
         Tensor *dec_h = seq2seq_rnn_step(&temps,
@@ -414,14 +518,19 @@ static float seq2seq_train_step(Seq2SeqModel *model,
                                          model->W_dec_x,
                                          model->W_dec_h,
                                          model->b_dec);
-        Tensor *out_lin = tensor_matmul(dec_h, model->W_out);
-        Tensor *logits = tensor_add_bias(out_lin, model->b_out);
-        Tensor *probs = tensor_softmax(logits);
-        Tensor *target = tensor_one_hot(batch->dec_tgt_tokens + t * batch->batch, opt->batch, VOCAB_SIZE);
-        Tensor *loss_t = tensor_cross_entropy(probs, target);
+        Tensor *context = NULL;
+        Tensor *logits;
+        Tensor *probs;
+        Tensor *target;
+        Tensor *loss_t;
 
-        temps_push(&temps, out_lin);
-        temps_push(&temps, logits);
+        if (model->attention) {
+            context = seq2seq_attention_context(&temps, model, enc_states, batch->seq_len, dec_h);
+        }
+        logits = seq2seq_project_logits(&temps, model, dec_h, context);
+        probs = tensor_softmax(logits);
+        target = tensor_one_hot(batch->dec_tgt_tokens + t * batch->batch, opt->batch, VOCAB_SIZE);
+        loss_t = tensor_cross_entropy(probs, target);
         temps_push(&temps, probs);
         temps_push(&temps, target);
         temps_push(&temps, loss_t);
@@ -458,6 +567,7 @@ static float seq2seq_train_step(Seq2SeqModel *model,
             *out_token_acc = token_acc;
         }
         temps_free_all(&temps);
+        free(enc_states);
         return loss_value;
     }
 }
@@ -465,9 +575,10 @@ static float seq2seq_train_step(Seq2SeqModel *model,
 static void seq2seq_predict_batch(Seq2SeqModel *model, const Seq2SeqBatch *batch, int *pred_tokens) {
     TensorTemps temps = {0};
     Tensor *h = tensor_create(batch->batch, model->hidden, 0);
+    Tensor **enc_states = (Tensor **)malloc(sizeof(Tensor *) * (size_t)batch->seq_len);
     int *prev_tokens = (int *)malloc(sizeof(int) * (size_t)batch->batch);
 
-    if (!h || !prev_tokens) {
+    if (!h || !enc_states || !prev_tokens) {
         die("seq2seq predict allocation failed");
     }
 
@@ -483,6 +594,7 @@ static void seq2seq_predict_batch(Seq2SeqModel *model, const Seq2SeqBatch *batch
                              model->W_enc_x,
                              model->W_enc_h,
                              model->b_enc);
+        enc_states[t] = h;
     }
 
     for (int b = 0; b < batch->batch; b++) {
@@ -494,11 +606,12 @@ static void seq2seq_predict_batch(Seq2SeqModel *model, const Seq2SeqBatch *batch
     for (int t = 0; t < batch->seq_len + 1; t++) {
         Tensor *dec_h = seq2seq_rnn_step(
             &temps, model, prev_tokens, batch->batch, h, model->W_dec_x, model->W_dec_h, model->b_dec);
-        Tensor *out_lin = tensor_matmul(dec_h, model->W_out);
-        Tensor *logits = tensor_add_bias(out_lin, model->b_out);
-
-        temps_push(&temps, out_lin);
-        temps_push(&temps, logits);
+        Tensor *context = NULL;
+        Tensor *logits;
+        if (model->attention) {
+            context = seq2seq_attention_context(&temps, model, enc_states, batch->seq_len, dec_h);
+        }
+        logits = seq2seq_project_logits(&temps, model, dec_h, context);
         for (int b = 0; b < batch->batch; b++) {
             int pred = tensor_argmax_row(logits, b);
             pred_tokens[t * batch->batch + b] = pred;
@@ -507,6 +620,7 @@ static void seq2seq_predict_batch(Seq2SeqModel *model, const Seq2SeqBatch *batch
         h = dec_h;
     }
 
+    free(enc_states);
     free(prev_tokens);
     temps_free_all(&temps);
 }
@@ -613,18 +727,19 @@ int main(int argc, char **argv) {
     if (opt.hidden <= 0) opt.hidden = 32;
     if (opt.min_len <= 0) opt.min_len = 3;
     if (opt.max_len < opt.min_len) opt.max_len = opt.min_len;
+    if (opt.attention != 0) opt.attention = 1;
     if (opt.lr <= 0.0f) opt.lr = 0.03f;
 
     seq2seq_model_init(&model, &opt, &seed);
     seq2seq_batch_init(&batch, opt.batch, opt.max_len);
 
     seq2seq_print_architecture(&model);
-    printf("opt: steps=%d batch=%d min_len=%d max_len=%d lr=%.4f\n",
+    printf("opt: steps=%d batch=%d min_len=%d max_len=%d\n",
            opt.steps,
            opt.batch,
            opt.min_len,
-           opt.max_len,
-           opt.lr);
+           opt.max_len);
+    printf("opt: lr=%.4f attention=%d log=%s\n", opt.lr, opt.attention, opt.log_path);
     logf = fopen(opt.log_path, "w");
     if (!logf) {
         die("failed to open seq2seq log file");

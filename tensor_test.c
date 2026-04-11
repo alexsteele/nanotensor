@@ -219,6 +219,84 @@ static int test_one_hot_and_argmax(void) {
     return 0;
 }
 
+static int test_concat_cols(void) {
+    float av[] = {1.0f, 2.0f, 3.0f, 4.0f};
+    float bv[] = {5.0f, 6.0f, 7.0f, 8.0f, 9.0f, 10.0f};
+    float tv[] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    Tensor *a = tensor_from_array(2, 2, av, 1);
+    Tensor *b = tensor_from_array(2, 3, bv, 1);
+    Tensor *cat = tensor_concat_cols(a, b);
+    Tensor *target = tensor_from_array(2, 5, tv, 0);
+    Tensor *loss = tensor_mse_loss(cat, target);
+
+    ASSERT_TRUE(cat->rows == 2 && cat->cols == 5);
+    ASSERT_CLOSE(cat->data[0], 1.0f, 1e-6f);
+    ASSERT_CLOSE(cat->data[1], 2.0f, 1e-6f);
+    ASSERT_CLOSE(cat->data[2], 5.0f, 1e-6f);
+    ASSERT_CLOSE(cat->data[4], 7.0f, 1e-6f);
+    ASSERT_CLOSE(cat->data[5], 3.0f, 1e-6f);
+    ASSERT_CLOSE(cat->data[9], 10.0f, 1e-6f);
+
+    tensor_backward(loss);
+
+    ASSERT_CLOSE(a->grad[0], 0.2f, 1e-6f);
+    ASSERT_CLOSE(a->grad[1], 0.4f, 1e-6f);
+    ASSERT_CLOSE(a->grad[2], 0.6f, 1e-6f);
+    ASSERT_CLOSE(a->grad[3], 0.8f, 1e-6f);
+    ASSERT_CLOSE(b->grad[0], 1.0f, 1e-6f);
+    ASSERT_CLOSE(b->grad[1], 1.2f, 1e-6f);
+    ASSERT_CLOSE(b->grad[2], 1.4f, 1e-6f);
+    ASSERT_CLOSE(b->grad[3], 1.6f, 1e-6f);
+    ASSERT_CLOSE(b->grad[4], 1.8f, 1e-6f);
+    ASSERT_CLOSE(b->grad[5], 2.0f, 1e-6f);
+
+    tensor_free(a);
+    tensor_free(b);
+    tensor_free(cat);
+    tensor_free(target);
+    tensor_free(loss);
+    return 0;
+}
+
+static int test_slice_with_grad(void) {
+    float xv[] = {
+        1.0f, 2.0f, 3.0f, 4.0f,
+        5.0f, 6.0f, 7.0f, 8.0f,
+        9.0f, 10.0f, 11.0f, 12.0f};
+    float tv[] = {0.0f, 0.0f, 0.0f, 0.0f};
+    Tensor *x = tensor_from_array(3, 4, xv, 1);
+    Tensor *slice = tensor_slice(x, 1, 3, 1, 3);
+    Tensor *target = tensor_from_array(2, 2, tv, 0);
+    Tensor *loss = tensor_mse_loss(slice, target);
+
+    ASSERT_TRUE(slice->rows == 2 && slice->cols == 2);
+    ASSERT_CLOSE(slice->data[0], 6.0f, 1e-6f);
+    ASSERT_CLOSE(slice->data[1], 7.0f, 1e-6f);
+    ASSERT_CLOSE(slice->data[2], 10.0f, 1e-6f);
+    ASSERT_CLOSE(slice->data[3], 11.0f, 1e-6f);
+
+    tensor_backward(loss);
+
+    ASSERT_CLOSE(x->grad[0], 0.0f, 1e-6f);
+    ASSERT_CLOSE(x->grad[1], 0.0f, 1e-6f);
+    ASSERT_CLOSE(x->grad[2], 0.0f, 1e-6f);
+    ASSERT_CLOSE(x->grad[3], 0.0f, 1e-6f);
+    ASSERT_CLOSE(x->grad[4], 0.0f, 1e-6f);
+    ASSERT_CLOSE(x->grad[5], 3.0f, 1e-6f);
+    ASSERT_CLOSE(x->grad[6], 3.5f, 1e-6f);
+    ASSERT_CLOSE(x->grad[7], 0.0f, 1e-6f);
+    ASSERT_CLOSE(x->grad[8], 0.0f, 1e-6f);
+    ASSERT_CLOSE(x->grad[9], 5.0f, 1e-6f);
+    ASSERT_CLOSE(x->grad[10], 5.5f, 1e-6f);
+    ASSERT_CLOSE(x->grad[11], 0.0f, 1e-6f);
+
+    tensor_free(x);
+    tensor_free(slice);
+    tensor_free(target);
+    tensor_free(loss);
+    return 0;
+}
+
 static int test_softmax_cross_entropy(void) {
     float lv[] = {1.0f, 2.0f, 0.0f};
     float tv[] = {0.0f, 1.0f, 0.0f};
@@ -406,11 +484,11 @@ static int test_backward_layout_ops(void) {
 
     ASSERT_CLOSE(loss->data[0], 18.5000f, 1e-6f);
     ASSERT_CLOSE(x->grad[0], 0.0f, 1e-6f);
-    ASSERT_CLOSE(x->grad[1], 0.0f, 1e-6f);
-    ASSERT_CLOSE(x->grad[2], 0.0f, 1e-6f);
+    ASSERT_CLOSE(x->grad[1], 1.0f, 1e-6f);
+    ASSERT_CLOSE(x->grad[2], 1.5f, 1e-6f);
     ASSERT_CLOSE(x->grad[3], 0.0f, 1e-6f);
-    ASSERT_CLOSE(x->grad[4], 0.0f, 1e-6f);
-    ASSERT_CLOSE(x->grad[5], 0.0f, 1e-6f);
+    ASSERT_CLOSE(x->grad[4], 2.5f, 1e-6f);
+    ASSERT_CLOSE(x->grad[5], 3.0f, 1e-6f);
 
     tensor_free(x);
     tensor_free(s);
@@ -463,6 +541,8 @@ int main(void) {
     if (test_matmul_and_bias() != 0) return 1;
     if (test_activations() != 0) return 1;
     if (test_one_hot_and_argmax() != 0) return 1;
+    if (test_concat_cols() != 0) return 1;
+    if (test_slice_with_grad() != 0) return 1;
     if (test_pow_sqrt() != 0) return 1;
     if (test_layernorm() != 0) return 1;
     if (test_softmax_cross_entropy() != 0) return 1;

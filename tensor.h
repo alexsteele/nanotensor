@@ -19,6 +19,11 @@ struct Tensor {
 
     int op;
     float scalar;
+    /* Small per-op metadata slots used by some backward passes, e.g. slice bounds. */
+    int aux0;
+    int aux1;
+    int aux2;
+    int aux3;
 };
 
 Tensor *tensor_create(int rows, int cols, int requires_grad);
@@ -48,6 +53,7 @@ int tensor_snapshot_load(Tensor **tensors, size_t count, const char *path);
 Tensor *tensor_add(Tensor *a, Tensor *b);
 Tensor *tensor_sub(Tensor *a, Tensor *b);
 Tensor *tensor_mul_elem(Tensor *a, Tensor *b);
+Tensor *tensor_concat_cols(Tensor *a, Tensor *b);
 Tensor *tensor_add_broadcast(Tensor *a, Tensor *b);
 Tensor *tensor_mul_broadcast(Tensor *a, Tensor *b);
 Tensor *tensor_scalar_mul(Tensor *a, float scalar);

@@ -11,6 +11,7 @@ enum {
     OP_ADD,
     OP_SUB,
     OP_MUL_ELEM,
+    OP_CONCAT_COLS,
     OP_ADD_BROADCAST,
     OP_MUL_BROADCAST,
     OP_SCALAR_MUL,
@@ -18,6 +19,7 @@ enum {
     OP_ADD_BIAS,
     OP_RESHAPE,
     OP_TRANSPOSE,
+    OP_SLICE,
     OP_SUM_AXIS0,
     OP_SUM_AXIS1,
     OP_MEAN_AXIS0,
@@ -637,6 +639,48 @@ Tensor *tensor_mul_elem(Tensor *a, Tensor *b) {
     return out;
 }
 
+static void backward_concat_cols(Tensor *out) {
+    Tensor *a = out->parents[0];
+    Tensor *b = out->parents[1];
+    if (a->requires_grad) {
+        ensure_grad(a);
+        for (int i = 0; i < a->rows; i++) {
+            for (int j = 0; j < a->cols; j++) {
+                a->grad[i * a->cols + j] += out->grad[i * out->cols + j];
+            }
+        }
+    }
+    if (b->requires_grad) {
+        ensure_grad(b);
+        for (int i = 0; i < b->rows; i++) {
+            for (int j = 0; j < b->cols; j++) {
+                b->grad[i * b->cols + j] += out->grad[i * out->cols + (a->cols + j)];
+            }
+        }
+    }
+}
+
+Tensor *tensor_concat_cols(Tensor *a, Tensor *b) {
+    Tensor *parents[2] = {a, b};
+    int req;
+    Tensor *out;
+
+    if (a->rows != b->rows) {
+        die("tensor_concat_cols: row mismatch");
+    }
+    req = infer_requires_grad(parents, 2);
+    out = tensor_new_op(a->rows, a->cols + b->cols, req, OP_CONCAT_COLS, parents, 2, backward_concat_cols);
+    for (int i = 0; i < out->rows; i++) {
+        for (int j = 0; j < a->cols; j++) {
+            out->data[i * out->cols + j] = a->data[i * a->cols + j];
+        }
+        for (int j = 0; j < b->cols; j++) {
+            out->data[i * out->cols + (a->cols + j)] = b->data[i * b->cols + j];
+        }
+    }
+    return out;
+}
+
 static void backward_add_broadcast(Tensor *out) {
     Tensor *a = out->parents[0];
     Tensor *b = out->parents[1];
@@ -999,7 +1043,26 @@ Tensor *tensor_transpose(Tensor *a) {
     return out;
 }
 
+static void backward_slice(Tensor *out) {
+    Tensor *a = out->parents[0];
+    int row_start = out->aux0;
+    int col_start = out->aux2;
+
+    if (!a->requires_grad) {
+        return;
+    }
+    ensure_grad(a);
+    for (int i = 0; i < out->rows; i++) {
+        for (int j = 0; j < out->cols; j++) {
+            a->grad[(row_start + i) * a->cols + (col_start + j)] += out->grad[i * out->cols + j];
+        }
+    }
+}
+
 Tensor *tensor_slice(Tensor *a, int row_start, int row_end, int col_start, int col_end) {
+    Tensor *parents[1] = {a};
+    int req = infer_requires_grad(parents, 1);
+    Tensor *out;
     ensure_slice_bounds(a, row_start, row_end, col_start, col_end, "tensor_slice: invalid range");
     int out_rows = row_end - row_start;
     int out_cols = col_end - col_start;
@@ -1007,8 +1070,11 @@ Tensor *tensor_slice(Tensor *a, int row_start, int row_end, int col_start, int c
         die("tensor_slice: empty slice");
     }
 
-    /* Slice is a detached copy for now (not a view, no gradient link). */
-    Tensor *out = tensor_create(out_rows, out_cols, 0);
+    out = tensor_new_op(out_rows, out_cols, req, OP_SLICE, parents, 1, backward_slice);
+    out->aux0 = row_start;
+    out->aux1 = row_end;
+    out->aux2 = col_start;
+    out->aux3 = col_end;
 
     for (int i = 0; i < out_rows; i++) {
         for (int j = 0; j < out_cols; j++) {

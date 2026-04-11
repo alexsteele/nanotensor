@@ -32,7 +32,7 @@ The initial token set should stay tiny:
 
 That keeps the model and the decoding logic easy to inspect.
 
-## V1 Architecture
+## Baseline Architecture
 
 The first model should be a plain recurrent encoder-decoder with no attention:
 
@@ -48,6 +48,22 @@ At a high level:
 - bridge: `encoder_final_hidden -> decoder_hidden_0`
 - decoder: `prev_token + hidden -> next hidden -> vocab logits`
 
+## Attention Upgrade
+
+The file now also supports an optional attention variant enabled with
+`--attention=1`.
+
+That variant keeps the same encoder and decoder RNNs, but each decoder step
+also:
+
+- scores the current decoder hidden state against each encoder hidden state
+- softmaxes those scores over source positions
+- builds a context vector as a weighted sum of encoder states
+- projects `[decoder_hidden, context]` to vocabulary logits
+
+This keeps the plain RNN baseline available while giving us a clean
+before/after comparison on the exact same synthetic reversal task.
+
 ## Loss And Metrics
 
 Training should use cross-entropy over each decoder output position.
@@ -58,7 +74,7 @@ Useful metrics:
 - exact-sequence accuracy
 - periodic checkpoint logging to CSV for baseline comparison
 
-The current baseline should log:
+The current trainer logs:
 
 - `step`
 - `seq_len`
@@ -74,8 +90,9 @@ The trainer now uses a simple length curriculum:
 - middle steps widen the sampled length range
 - final steps use the full configured `max_len`
 
-This is meant to make the plain fixed-context encoder-decoder easier to train
-before trying a larger architectural upgrade like attention.
+This is meant to make the plain fixed-context encoder-decoder easier to train,
+and it can also remain enabled for the attention variant so we compare the two
+models under the same data schedule.
 
 ## Experiment Log
 
@@ -101,11 +118,24 @@ Track one short entry per meaningful run keyed by git commit.
   at zero; the main value is confirming the current curriculum + logging
   baseline and output format
 
+### attention run at 2000 steps
+
+- config:
+  `attention=1 steps=2000 len=8 cur_max=8`
+- checkpoint metrics:
+  step `2000`: `train_loss=2.080554 train_tok=0.219000 eval_tok=0.331000 eval_seq=0.000000`
+- sample:
+  `18955654 -> 8888000 (target 45655981)`
+- notes:
+  attention is learning something measurable at the token level, but sequence
+  reversal is still far from solved at 2000 steps; exact-sequence accuracy
+  remained at zero and the sample output still collapses toward repeated digits
+  instead of a faithful reversed copy
+
 ## Scope Boundaries
 
 The first version should stay intentionally small:
 
-- no attention yet
 - no beam search
 - no padding/masking system
 - no real-language corpus
@@ -113,8 +143,8 @@ The first version should stay intentionally small:
 
 ## Follow-Up Path
 
-Once the fixed-context encoder-decoder works, the next upgrade is:
+Now that the first attention variant exists, the next upgrades are:
 
-- add attention over encoder states
-
-That gives a clean before/after comparison on the same synthetic reversal task.
+- gather longer baseline vs attention runs
+- compare whether curriculum still helps once attention is enabled
+- improve logging and sample inspection for qualitative comparison
