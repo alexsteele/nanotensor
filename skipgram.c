@@ -1,4 +1,5 @@
 #include "tensor.h"
+#include "vocab.h"
 
 /*
  * skipgram.c
@@ -15,27 +16,12 @@
  *              [--lr=FLOAT] [--embed=N] [--vocab=N]
  *              [--snapshot=PATH] [--vocab-out=PATH]
  */
-#include <ctype.h>
 #include <math.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#define WORD_HASH_CAPACITY 65536
-#define MAX_WORD_LEN 63
 #define DEFAULT_VOCAB 800
-
-typedef struct {
-    char *word;
-    int count;
-} VocabEntry;
-
-typedef struct {
-    char *word;
-    int count;
-    int id;
-} HashSlot;
 
 typedef struct {
     int vocab;
@@ -117,216 +103,6 @@ static void parse_args(int argc, char **argv, SkipGramOptions *opt) {
     }
 }
 
-static char *read_file(const char *path, size_t *out_size) {
-    FILE *f = fopen(path, "rb");
-    char *buf;
-    long sz;
-
-    if (!f) {
-        return NULL;
-    }
-    if (fseek(f, 0, SEEK_END) != 0) {
-        fclose(f);
-        return NULL;
-    }
-    sz = ftell(f);
-    if (sz < 0) {
-        fclose(f);
-        return NULL;
-    }
-    if (fseek(f, 0, SEEK_SET) != 0) {
-        fclose(f);
-        return NULL;
-    }
-
-    buf = (char *)malloc((size_t)sz + 1);
-    if (!buf) {
-        fclose(f);
-        return NULL;
-    }
-    if (fread(buf, 1, (size_t)sz, f) != (size_t)sz) {
-        free(buf);
-        fclose(f);
-        return NULL;
-    }
-    fclose(f);
-    buf[sz] = '\0';
-    *out_size = (size_t)sz;
-    return buf;
-}
-
-static uint32_t hash_word(const char *word) {
-    uint32_t h = 2166136261u;
-    while (*word) {
-        h ^= (unsigned char)(*word++);
-        h *= 16777619u;
-    }
-    return h;
-}
-
-static char *dup_word(const char *src) {
-    size_t n = strlen(src);
-    char *dst = (char *)malloc(n + 1);
-    if (!dst) {
-        return NULL;
-    }
-    memcpy(dst, src, n + 1);
-    return dst;
-}
-
-static int next_word(const char *text, size_t n, size_t *pos, char word[MAX_WORD_LEN + 1]) {
-    size_t i = *pos;
-    int len = 0;
-
-    while (i < n) {
-        unsigned char ch = (unsigned char)text[i];
-        if (isalpha(ch) || ch == '\'') {
-            break;
-        }
-        i++;
-    }
-    if (i >= n) {
-        *pos = i;
-        return 0;
-    }
-
-    while (i < n) {
-        unsigned char ch = (unsigned char)text[i];
-        if (!(isalpha(ch) || ch == '\'')) {
-            break;
-        }
-        if (len < MAX_WORD_LEN) {
-            word[len++] = (char)tolower(ch);
-        }
-        i++;
-    }
-    word[len] = '\0';
-    *pos = i;
-    return len > 0;
-}
-
-static void count_words(const char *text, size_t n, HashSlot *table, int *unique_words, int *total_words) {
-    size_t pos = 0;
-    char word[MAX_WORD_LEN + 1];
-
-    *unique_words = 0;
-    *total_words = 0;
-    memset(table, 0, sizeof(HashSlot) * WORD_HASH_CAPACITY);
-
-    while (next_word(text, n, &pos, word)) {
-        uint32_t idx = hash_word(word) % WORD_HASH_CAPACITY;
-        (*total_words)++;
-        while (table[idx].word) {
-            if (strcmp(table[idx].word, word) == 0) {
-                table[idx].count++;
-                break;
-            }
-            idx = (idx + 1u) % WORD_HASH_CAPACITY;
-        }
-        if (!table[idx].word) {
-            table[idx].word = dup_word(word);
-            if (!table[idx].word) {
-                fprintf(stderr, "allocation failed building vocab\n");
-                exit(1);
-            }
-            table[idx].count = 1;
-            table[idx].id = -1;
-            (*unique_words)++;
-        }
-    }
-}
-
-static int compare_vocab_desc(const void *a, const void *b) {
-    const VocabEntry *va = (const VocabEntry *)a;
-    const VocabEntry *vb = (const VocabEntry *)b;
-    if (vb->count != va->count) {
-        return vb->count - va->count;
-    }
-    return strcmp(va->word, vb->word);
-}
-
-static VocabEntry *build_vocab_from_counts(HashSlot *table, int unique_words, int vocab_limit, int *out_vocab) {
-    VocabEntry *entries;
-    int k = 0;
-    int vocab;
-
-    entries = (VocabEntry *)malloc(sizeof(VocabEntry) * (size_t)unique_words);
-    if (!entries) {
-        return NULL;
-    }
-    for (int i = 0; i < WORD_HASH_CAPACITY; i++) {
-        if (table[i].word) {
-            entries[k].word = table[i].word;
-            entries[k].count = table[i].count;
-            k++;
-        }
-    }
-    qsort(entries, (size_t)k, sizeof(VocabEntry), compare_vocab_desc);
-    vocab = k < vocab_limit ? k : vocab_limit;
-    *out_vocab = vocab;
-    return entries;
-}
-
-static void assign_vocab_ids(HashSlot *table, VocabEntry *vocab_entries, int vocab) {
-    for (int i = 0; i < vocab; i++) {
-        uint32_t idx = hash_word(vocab_entries[i].word) % WORD_HASH_CAPACITY;
-        while (table[idx].word) {
-            if (strcmp(table[idx].word, vocab_entries[i].word) == 0) {
-                table[idx].id = i;
-                break;
-            }
-            idx = (idx + 1u) % WORD_HASH_CAPACITY;
-        }
-    }
-}
-
-static int *encode_corpus(const char *text, size_t n, HashSlot *table, int *out_tokens) {
-    size_t pos = 0;
-    char word[MAX_WORD_LEN + 1];
-    int cap = 1024;
-    int len = 0;
-    int *tokens = (int *)malloc(sizeof(int) * (size_t)cap);
-
-    if (!tokens) {
-        return NULL;
-    }
-
-    while (next_word(text, n, &pos, word)) {
-        uint32_t idx = hash_word(word) % WORD_HASH_CAPACITY;
-        int id = -1;
-        while (table[idx].word) {
-            if (strcmp(table[idx].word, word) == 0) {
-                id = table[idx].id;
-                break;
-            }
-            idx = (idx + 1u) % WORD_HASH_CAPACITY;
-        }
-        if (id < 0) {
-            continue;
-        }
-        if (len == cap) {
-            int next_cap = cap * 2;
-            int *next = (int *)realloc(tokens, sizeof(int) * (size_t)next_cap);
-            if (!next) {
-                free(tokens);
-                return NULL;
-            }
-            tokens = next;
-            cap = next_cap;
-        }
-        tokens[len++] = id;
-    }
-
-    *out_tokens = len;
-    return tokens;
-}
-
-static void free_hash_table(HashSlot *table) {
-    for (int i = 0; i < WORD_HASH_CAPACITY; i++) {
-        free(table[i].word);
-    }
-}
-
 static Tensor *make_one_hot(const int *idx, int n, int vocab) {
     Tensor *t = tensor_create(n, vocab, 0);
     tensor_fill(t, 0.0f);
@@ -397,21 +173,13 @@ static float norm_row(const float *a, int n) {
     return sqrtf(sum > 1e-12f ? sum : 1e-12f);
 }
 
-static int vocab_id_for_word(VocabEntry *vocab_entries, int vocab, const char *word) {
-    for (int i = 0; i < vocab; i++) {
-        if (strcmp(vocab_entries[i].word, word) == 0) {
-            return i;
-        }
-    }
-    return -1;
-}
-
-static void print_nearest_neighbors(SkipGramModel *model, VocabEntry *vocab_entries, int vocab, const char *word, int k) {
-    int id = vocab_id_for_word(vocab_entries, vocab, word);
+static void print_nearest_neighbors(SkipGramModel *model, const EncodedCorpus *corpus, const char *word, int k) {
+    int id = vocab_id_for_word(corpus, word);
     float best_score[8];
     int best_id[8];
     const float *query;
     float query_norm;
+    int vocab = corpus->vocab;
 
     if (k > 8) {
         k = 8;
@@ -457,40 +225,17 @@ static void print_nearest_neighbors(SkipGramModel *model, VocabEntry *vocab_entr
     printf("%s:", word);
     for (int i = 0; i < k; i++) {
         if (best_id[i] >= 0) {
-            printf(" %s(%.2f)", vocab_entries[best_id[i]].word, best_score[i]);
+            printf(" %s(%.2f)", corpus->entries[best_id[i]].word, best_score[i]);
         }
     }
     printf("\n");
-}
-
-static int save_vocab(VocabEntry *vocab_entries, int vocab, const char *path) {
-    FILE *f = fopen(path, "w");
-    if (!f) {
-        return -1;
-    }
-    for (int i = 0; i < vocab; i++) {
-        if (fprintf(f, "%d\t%s\t%d\n", i, vocab_entries[i].word, vocab_entries[i].count) < 0) {
-            fclose(f);
-            return -1;
-        }
-    }
-    if (fclose(f) != 0) {
-        return -1;
-    }
-    return 0;
 }
 
 int main(int argc, char **argv) {
     SkipGramOptions opt;
     size_t text_len = 0;
     char *text;
-    HashSlot *table;
-    VocabEntry *vocab_entries;
-    int unique_words = 0;
-    int total_words = 0;
-    int vocab = 0;
-    int n_tokens = 0;
-    int *tokens;
+    EncodedCorpus corpus;
     int *center_idx;
     int *context_idx;
     unsigned int seed = 1337u;
@@ -498,7 +243,7 @@ int main(int argc, char **argv) {
     Tensor *params[2];
 
     parse_args(argc, argv, &opt);
-    text = read_file(opt.text_path, &text_len);
+    text = vocab_read_file(opt.text_path, &text_len);
 
     if (!text) {
         fprintf(stderr, "failed to read '%s'\n", opt.text_path);
@@ -510,31 +255,9 @@ int main(int argc, char **argv) {
     if (opt.embed <= 0) opt.embed = 32;
     if (opt.vocab_limit <= 0) opt.vocab_limit = DEFAULT_VOCAB;
 
-    table = (HashSlot *)calloc(WORD_HASH_CAPACITY, sizeof(HashSlot));
-    if (!table) {
-        fprintf(stderr, "allocation failed\n");
-        free(text);
-        return 1;
-    }
-
-    count_words(text, text_len, table, &unique_words, &total_words);
-    vocab_entries = build_vocab_from_counts(table, unique_words, opt.vocab_limit, &vocab);
-    if (!vocab_entries || vocab < 8) {
-        fprintf(stderr, "failed to build vocab\n");
-        free_hash_table(table);
-        free(table);
-        free(text);
-        free(vocab_entries);
-        return 1;
-    }
-    assign_vocab_ids(table, vocab_entries, vocab);
-    tokens = encode_corpus(text, text_len, table, &n_tokens);
-    if (!tokens || n_tokens < 16) {
-        fprintf(stderr, "failed to encode corpus\n");
-        free(tokens);
-        free(vocab_entries);
-        free_hash_table(table);
-        free(table);
+    if (vocab_build_corpus(text, text_len, opt.vocab_limit, &corpus) != 0 || corpus.vocab < 8 ||
+        corpus.n_tokens < 16) {
+        fprintf(stderr, "failed to build corpus/vocab\n");
         free(text);
         return 1;
     }
@@ -545,22 +268,16 @@ int main(int argc, char **argv) {
         fprintf(stderr, "allocation failed\n");
         free(center_idx);
         free(context_idx);
-        free(tokens);
-        free(vocab_entries);
-        free_hash_table(table);
-        free(table);
+        vocab_free_corpus(&corpus);
         free(text);
         return 1;
     }
 
-    if (skipgram_init(&model, vocab, opt.embed, &seed) != 0) {
+    if (skipgram_init(&model, corpus.vocab, opt.embed, &seed) != 0) {
         fprintf(stderr, "failed to initialize model\n");
         free(center_idx);
         free(context_idx);
-        free(tokens);
-        free(vocab_entries);
-        free_hash_table(table);
-        free(table);
+        vocab_free_corpus(&corpus);
         free(text);
         return 1;
     }
@@ -569,7 +286,7 @@ int main(int argc, char **argv) {
     params[1] = model.W_out;
 
     printf("loaded %zu bytes, total_words=%d kept_tokens=%d vocab=%d embed=%d\n",
-           text_len, total_words, n_tokens, vocab, opt.embed);
+           text_len, corpus.total_words, corpus.n_tokens, corpus.vocab, opt.embed);
     printf("training skip-gram softmax: steps=%d batch=%d window=%d lr=%.4f momentum=0.9\n",
            opt.steps, opt.batch, opt.window, opt.lr);
 
@@ -581,9 +298,9 @@ int main(int argc, char **argv) {
         Tensor *probs;
         Tensor *loss;
 
-        pick_training_batch(tokens, n_tokens, opt.batch, opt.window, center_idx, context_idx, &seed);
-        X = make_one_hot(center_idx, opt.batch, vocab);
-        Y = make_one_hot(context_idx, opt.batch, vocab);
+        pick_training_batch(corpus.tokens, corpus.n_tokens, opt.batch, opt.window, center_idx, context_idx, &seed);
+        X = make_one_hot(center_idx, opt.batch, corpus.vocab);
+        Y = make_one_hot(context_idx, opt.batch, corpus.vocab);
         hidden = tensor_matmul(X, model.W_in);
         logits = tensor_matmul(hidden, model.W_out);
         probs = tensor_softmax(logits);
@@ -605,34 +322,28 @@ int main(int argc, char **argv) {
     }
 
     printf("\n--- nearest neighbors ---\n");
-    print_nearest_neighbors(&model, vocab_entries, vocab, "king", 5);
-    print_nearest_neighbors(&model, vocab_entries, vocab, "queen", 5);
-    print_nearest_neighbors(&model, vocab_entries, vocab, "love", 5);
-    print_nearest_neighbors(&model, vocab_entries, vocab, "death", 5);
-    print_nearest_neighbors(&model, vocab_entries, vocab, "man", 5);
-    print_nearest_neighbors(&model, vocab_entries, vocab, "woman", 5);
+    print_nearest_neighbors(&model, &corpus, "king", 5);
+    print_nearest_neighbors(&model, &corpus, "queen", 5);
+    print_nearest_neighbors(&model, &corpus, "love", 5);
+    print_nearest_neighbors(&model, &corpus, "death", 5);
+    print_nearest_neighbors(&model, &corpus, "man", 5);
+    print_nearest_neighbors(&model, &corpus, "woman", 5);
 
     if (tensor_snapshot_save(params, 2, opt.snapshot_path) != 0) {
         fprintf(stderr, "failed to save snapshot to '%s'\n", opt.snapshot_path);
         skipgram_free(&model);
         free(center_idx);
         free(context_idx);
-        free(tokens);
-        free(vocab_entries);
-        free_hash_table(table);
-        free(table);
+        vocab_free_corpus(&corpus);
         free(text);
         return 1;
     }
-    if (save_vocab(vocab_entries, vocab, opt.vocab_out_path) != 0) {
+    if (vocab_save(&corpus, opt.vocab_out_path) != 0) {
         fprintf(stderr, "failed to save vocab to '%s'\n", opt.vocab_out_path);
         skipgram_free(&model);
         free(center_idx);
         free(context_idx);
-        free(tokens);
-        free(vocab_entries);
-        free_hash_table(table);
-        free(table);
+        vocab_free_corpus(&corpus);
         free(text);
         return 1;
     }
@@ -642,10 +353,7 @@ int main(int argc, char **argv) {
     skipgram_free(&model);
     free(center_idx);
     free(context_idx);
-    free(tokens);
-    free(vocab_entries);
-    free_hash_table(table);
-    free(table);
+    vocab_free_corpus(&corpus);
     free(text);
     return 0;
 }

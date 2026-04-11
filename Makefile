@@ -27,8 +27,8 @@ demo: demo.c tensor.h $(LIB)
 llm: llm.c tensor.h $(LIB)
 	$(CC) $(CFLAGS) llm.c $(LIB) -lm -o llm
 
-skipgram: skipgram.c tensor.h $(LIB)
-	$(CC) $(CFLAGS) skipgram.c $(LIB) -lm -o skipgram
+skipgram: skipgram.c vocab.c vocab.h tensor.h $(LIB)
+	$(CC) $(CFLAGS) skipgram.c vocab.c $(LIB) -lm -o skipgram
 
 ngram: ngram.c vocab.c vocab.h tensor.h $(LIB)
 	$(CC) $(CFLAGS) ngram.c vocab.c $(LIB) -lm -o ngram
