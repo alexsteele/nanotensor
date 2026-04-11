@@ -22,9 +22,10 @@ make test        # builds and runs unit tests
 make run         # runs the demo training program
 make rebuild     # forces a clean rebuild of all binaries for this machine
 make mnist-data  # downloads and unpacks raw MNIST IDX files into data/mnist
+make ngram       # builds the neural word-level n-gram demo
 ```
 
-## Minimal Example
+## Example
 
 ```c
 #include "tensor.h"
@@ -131,6 +132,41 @@ woman: now(0.93) were(0.93) they(0.92) at(0.92) which(0.91)
 saved snapshot: out/skipgram_snapshot.bin
 saved vocab: out/skipgram_vocab.txt
 ```
+
+## NGram Demo
+
+`ngram.c` is a small neural word-level n-gram language model demo:
+
+- builds a retained vocabulary from a text corpus via `vocab.c`
+- uses the previous `N` words as fixed context
+- learns shared embeddings plus a tanh hidden layer
+- predicts the next word with softmax and cross-entropy
+- reports held-out eval loss / perplexity and prints a short greedy sample
+
+Build and run:
+
+```bash
+make ngram
+./ngram \
+  --text=data/shakespeare/shakespeare_gutenberg.txt \
+  --steps=2000 \
+  --batch=64 \
+  --context=3 \
+  --lr=0.03 \
+  --embed=32 \
+  --hidden=64 \
+  --vocab=1000 \
+  --snapshot=out/ngram_snapshot.bin \
+  --vocab-out=out/ngram_vocab.txt
+```
+
+Named args: `--text=PATH --steps=N --batch=N --context=N --lr=FLOAT --embed=N --hidden=N --vocab=N --snapshot=PATH --vocab-out=PATH`
+
+The demo prints periodic training loss, held-out eval loss / perplexity when enough eval tokens are
+available, shows a few next-word predictions plus a short greedy sample after training, and saves:
+
+- `out/ngram_snapshot.bin`
+- `out/ngram_vocab.txt`
 
 ## MNIST Conv Demo (MVP)
 
