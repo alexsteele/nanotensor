@@ -135,15 +135,6 @@ static void parse_args(int argc, char **argv, NGramOptions *opt) {
     }
 }
 
-static Tensor *make_one_hot(const int *idx, int n, int vocab) {
-    Tensor *t = tensor_create(n, vocab, 0);
-    tensor_fill(t, 0.0f);
-    for (int i = 0; i < n; i++) {
-        t->data[i * vocab + idx[i]] = 1.0f;
-    }
-    return t;
-}
-
 static void ngram_clear_forward_temps(NGramModel *model) {
     if (!model) {
         return;
@@ -301,7 +292,7 @@ static Tensor *ngram_forward(NGramModel *model, const int *context_ids, int batc
         for (int b = 0; b < batch; b++) {
             col_idx[b] = context_ids[b * model->context + c];
         }
-        model->tmp_x_list[c] = make_one_hot(col_idx, batch, model->vocab);
+        model->tmp_x_list[c] = tensor_one_hot(col_idx, batch, model->vocab);
         model->tmp_embed_list[c] = tensor_matmul(model->tmp_x_list[c], model->E);
         model->tmp_proj_list[c] = tensor_matmul(model->tmp_embed_list[c], model->W_ctx[c]);
         free(col_idx);
@@ -325,20 +316,6 @@ static Tensor *ngram_forward(NGramModel *model, const int *context_ids, int batc
     model->tmp_logits = logits;
     tensor_free(logits_lin);
     return logits;
-}
-
-static int argmax_row(const Tensor *t, int row) {
-    int best = 0;
-    float best_value = t->data[row * t->cols];
-
-    for (int i = 1; i < t->cols; i++) {
-        float value = t->data[row * t->cols + i];
-        if (value > best_value) {
-            best_value = value;
-            best = i;
-        }
-    }
-    return best;
 }
 
 static void build_batch_from_tokens(const int *tokens,
@@ -380,7 +357,7 @@ static float ngram_eval(NGramModel *model, const int *tokens, int n_tokens, int 
 
         build_batch_from_tokens(tokens, batch, context, start, context_ids, target_ids);
         logits = ngram_forward(model, context_ids, batch);
-        targets = make_one_hot(target_ids, batch, model->vocab);
+        targets = tensor_one_hot(target_ids, batch, model->vocab);
         probs = tensor_softmax(logits);
         loss = tensor_cross_entropy(probs, targets);
         total_loss += loss->data[0];
@@ -475,7 +452,7 @@ static void ngram_generate_sample(NGramModel *model, const EncodedCorpus *corpus
         }
         logits = ngram_forward(model, context_ids, 1);
         probs = tensor_softmax(logits);
-        next_id = argmax_row(probs, 0);
+        next_id = tensor_argmax_row(probs, 0);
         ids[n_ids++] = next_id;
         printf(" %s", corpus->entries[next_id].word);
 
@@ -571,7 +548,7 @@ int main(int argc, char **argv) {
             pick_training_batch(&corpus, opt.batch, opt.context, context_ids, target_ids, &seed);
         }
         logits = ngram_forward(&model, context_ids, opt.batch);
-        targets = make_one_hot(target_ids, opt.batch, corpus.vocab);
+        targets = tensor_one_hot(target_ids, opt.batch, corpus.vocab);
         probs = tensor_softmax(logits);
         loss = tensor_cross_entropy(probs, targets);
 

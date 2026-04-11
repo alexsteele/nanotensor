@@ -103,15 +103,6 @@ static void parse_args(int argc, char **argv, SkipGramOptions *opt) {
     }
 }
 
-static Tensor *make_one_hot(const int *idx, int n, int vocab) {
-    Tensor *t = tensor_create(n, vocab, 0);
-    tensor_fill(t, 0.0f);
-    for (int i = 0; i < n; i++) {
-        t->data[i * vocab + idx[i]] = 1.0f;
-    }
-    return t;
-}
-
 static int skipgram_init(SkipGramModel *m, int vocab, int embed, unsigned int *seed) {
     m->vocab = vocab;
     m->embed = embed;
@@ -299,8 +290,8 @@ int main(int argc, char **argv) {
         Tensor *loss;
 
         pick_training_batch(corpus.tokens, corpus.n_tokens, opt.batch, opt.window, center_idx, context_idx, &seed);
-        X = make_one_hot(center_idx, opt.batch, corpus.vocab);
-        Y = make_one_hot(context_idx, opt.batch, corpus.vocab);
+        X = tensor_one_hot(center_idx, opt.batch, corpus.vocab);
+        Y = tensor_one_hot(context_idx, opt.batch, corpus.vocab);
         hidden = tensor_matmul(X, model.W_in);
         logits = tensor_matmul(hidden, model.W_out);
         probs = tensor_softmax(logits);

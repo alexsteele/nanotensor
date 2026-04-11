@@ -198,6 +198,27 @@ static int test_activations(void) {
     return 0;
 }
 
+static int test_one_hot_and_argmax(void) {
+    int idx[] = {2, 0, 1};
+    float pv[] = {0.1f, 0.7f, 0.2f, -1.0f, 3.0f, 2.0f};
+    Tensor *hot = tensor_one_hot(idx, 3, 4);
+    Tensor *p = tensor_from_array(2, 3, pv, 0);
+
+    ASSERT_TRUE(hot->rows == 3 && hot->cols == 4);
+    ASSERT_CLOSE(hot->data[2], 1.0f, 1e-6f);
+    ASSERT_CLOSE(hot->data[4], 1.0f, 1e-6f);
+    ASSERT_CLOSE(hot->data[9], 1.0f, 1e-6f);
+    ASSERT_CLOSE(hot->data[0], 0.0f, 1e-6f);
+    ASSERT_CLOSE(hot->data[11], 0.0f, 1e-6f);
+
+    ASSERT_TRUE(tensor_argmax_row(p, 0) == 1);
+    ASSERT_TRUE(tensor_argmax_row(p, 1) == 1);
+
+    tensor_free(hot);
+    tensor_free(p);
+    return 0;
+}
+
 static int test_softmax_cross_entropy(void) {
     float lv[] = {1.0f, 2.0f, 0.0f};
     float tv[] = {0.0f, 1.0f, 0.0f};
@@ -441,6 +462,7 @@ int main(void) {
     if (test_axis_reductions() != 0) return 1;
     if (test_matmul_and_bias() != 0) return 1;
     if (test_activations() != 0) return 1;
+    if (test_one_hot_and_argmax() != 0) return 1;
     if (test_pow_sqrt() != 0) return 1;
     if (test_layernorm() != 0) return 1;
     if (test_softmax_cross_entropy() != 0) return 1;

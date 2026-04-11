@@ -34,6 +34,8 @@ int tensor_get_grad_mode(void);
 void tensor_fill(Tensor *t, float value);
 void tensor_fill_randn(Tensor *t, float mean, float stddev, unsigned int *seed);
 void tensor_zero_grad(Tensor *t);
+Tensor *tensor_one_hot(const int *idx, int n, int classes);
+int tensor_argmax_row(const Tensor *t, int row);
 void tensor_print_shape(const Tensor *t);
 void tensor_print(const Tensor *t, const char *name, int print_grad);
 int tensor_save_file(const Tensor *t, FILE *f);

@@ -213,6 +213,43 @@ void tensor_zero_grad(Tensor *t) {
     memset(t->grad, 0, sizeof(float) * (size_t)tensor_numel(t));
 }
 
+Tensor *tensor_one_hot(const int *idx, int n, int classes) {
+    Tensor *t;
+
+    if (!idx || n <= 0 || classes <= 0) {
+        die("tensor_one_hot: invalid shape or indices");
+    }
+    t = tensor_create(n, classes, 0);
+    tensor_fill(t, 0.0f);
+    for (int i = 0; i < n; i++) {
+        if (idx[i] < 0 || idx[i] >= classes) {
+            tensor_free(t);
+            die("tensor_one_hot: index out of range");
+        }
+        t->data[i * classes + idx[i]] = 1.0f;
+    }
+    return t;
+}
+
+int tensor_argmax_row(const Tensor *t, int row) {
+    int best;
+    float best_value;
+
+    if (!t || row < 0 || row >= t->rows) {
+        die("tensor_argmax_row: row out of range");
+    }
+    best = 0;
+    best_value = t->data[row * t->cols];
+    for (int i = 1; i < t->cols; i++) {
+        float value = t->data[row * t->cols + i];
+        if (value > best_value) {
+            best_value = value;
+            best = i;
+        }
+    }
+    return best;
+}
+
 void tensor_print_shape(const Tensor *t) {
     if (!t) {
         printf("(null)\n");
