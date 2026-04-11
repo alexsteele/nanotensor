@@ -47,7 +47,7 @@ LOC - 4923
   coverage for them in `tensor_test.c`.
 - Added a minimal MNIST autoencoder demo, documented its architecture in `docs/autoencoder.md`, and
   added a reconstruction export/render flow for visual before-vs-after grids.
-- Captured the current n-gram baseline in `notes/ngram.md`, added a broader model roadmap in
+- Captured the current n-gram baseline in `docs/ngram.md`, added a broader model roadmap in
   `TODO.md`, and the current HEAD for this stretch is `db73058`.
 
 ## 2026-02-21
