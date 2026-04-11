@@ -9,13 +9,8 @@
 
 ## Seq2Seq
 
-- make Adam the default optimizer for seq2seq experiments if longer runs keep
-  looking better than momentum
 - compare plain RNN vs attention on the same fixed eval set with Adam
-- try a learned attention scoring layer if dot attention plateaus
 - add a cleaner qualitative eval panel with a fixed set of decode examples
-
-## MNIST Shared Infra
 
 ## Optimizers
 

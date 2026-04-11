@@ -57,6 +57,7 @@ That variant keeps the same encoder and decoder RNNs, but each decoder step
 also:
 
 - scores the current decoder hidden state against each encoder hidden state
+  with a small learned additive scorer
 - softmaxes those scores over source positions
 - builds a context vector as a weighted sum of encoder states
 - projects `[decoder_hidden, context]` to vocabulary logits
@@ -185,6 +186,21 @@ Track one short entry per meaningful run keyed by git commit.
   is still making alignment mistakes, especially on longer sequences and
   repeated digits, but the optimizer change gives us a much stronger training
   trajectory without changing the architecture.
+
+### learned additive attention + Adam run at 10000 steps
+
+- config:
+  `attention=1 opt=adam steps=10000 batch=32 embed=16 hidden=32 min_len=3 max_len=8 lr=0.003`
+- result:
+  `step=10000 train_loss=1.700396 train_tok=0.347000 eval_tok=0.480000 eval_seq=0.051000`
+- sample:
+  `35125752 -> 25553533 (target 25752153)`
+- notes:
+  this learned additive scorer improved exact-sequence accuracy relative to the
+  earlier 10K dot-attention run, but it regressed token accuracy sharply and
+  still produced visibly unstable long-sequence outputs. As currently
+  parameterized, it does not look like a clear upgrade over the simpler dot
+  attention baseline.
 
 ## Scope Boundaries
 

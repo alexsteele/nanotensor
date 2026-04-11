@@ -7,7 +7,7 @@
  * - Trains on a synthetic digit-sequence translation task
  * - Learns to map each input digit string to its reversed output string
  * - Uses a tanh RNN encoder and tanh RNN decoder over a tiny BOS/EOS vocabulary
- * - Can optionally add dot-product attention over encoder states
+ * - Can optionally add learned additive attention over encoder states
  * - Keeps the code intentionally small and readable
  *
  * Usage:
@@ -24,6 +24,7 @@
 #define BOS_TOKEN 10
 #define EOS_TOKEN 11
 #define VOCAB_SIZE 12
+#define SEQ2SEQ_PARAM_COUNT 13
 
 typedef enum {
     OPT_MOMENTUM = 0,
@@ -49,7 +50,7 @@ typedef struct {
  * -> encoder tanh RNN hidden states [seq, hidden]
  * -> final encoder hidden initializes decoder state
  * -> decoder tanh RNN unrolled with teacher forcing
- * -> optional dot attention over encoder states [seq, hidden]
+ * -> optional learned additive attention over encoder states [seq, hidden]
  * -> vocab logits per output position [seq + 1, vocab]
  */
 typedef struct {
@@ -63,12 +64,17 @@ typedef struct {
     Tensor *W_dec_x;
     Tensor *W_dec_h;
     Tensor *b_dec;
+    Tensor *W_att_dec;
+    Tensor *W_att_enc;
+    Tensor *b_att;
+    Tensor *v_att;
     Tensor *W_out;
     Tensor *b_out;
-    Tensor *params[9];
-    Tensor *velocity[9];
-    Tensor *adam_m1[9];
-    Tensor *adam_m2[9];
+    Tensor *params[SEQ2SEQ_PARAM_COUNT];
+    Tensor *velocity[SEQ2SEQ_PARAM_COUNT];
+    Tensor *adam_m1[SEQ2SEQ_PARAM_COUNT];
+    Tensor *adam_m2[SEQ2SEQ_PARAM_COUNT];
+    int param_count;
     int adam_step;
 } Seq2SeqModel;
 
@@ -111,6 +117,10 @@ static void seq2seq_eval_set_free(Seq2SeqEvalSet *eval_set);
 static void seq2seq_eval_set_load_batch(const Seq2SeqEvalSet *eval_set, int batch_index, Seq2SeqBatch *batch);
 static int seq2seq_curriculum_max_len(const Seq2SeqOptions *opt, int step);
 static void seq2seq_sample_batch(Seq2SeqBatch *batch, unsigned int *seed);
+static Tensor *seq2seq_attention_score(TensorTemps *temps,
+                                       Seq2SeqModel *model,
+                                       Tensor *enc_h,
+                                       Tensor *dec_h);
 static Tensor *seq2seq_attention_context(TensorTemps *temps,
                                          Seq2SeqModel *model,
                                          Tensor **enc_states,
@@ -314,19 +324,26 @@ static void seq2seq_model_init(Seq2SeqModel *model, const Seq2SeqOptions *opt, u
     model->W_dec_x = tensor_create(opt->embed, opt->hidden, 1);
     model->W_dec_h = tensor_create(opt->hidden, opt->hidden, 1);
     model->b_dec = tensor_create(1, opt->hidden, 1);
+    if (model->attention) {
+        model->W_att_dec = tensor_create(opt->hidden, opt->hidden, 1);
+        model->W_att_enc = tensor_create(opt->hidden, opt->hidden, 1);
+        model->b_att = tensor_create(1, opt->hidden, 1);
+        model->v_att = tensor_create(opt->hidden, 1, 1);
+    }
     model->W_out = tensor_create(opt->attention ? (2 * opt->hidden) : opt->hidden, VOCAB_SIZE, 1);
     model->b_out = tensor_create(1, VOCAB_SIZE, 1);
-
-    if (!model->E || !model->W_enc_x || !model->W_enc_h || !model->b_enc || !model->W_dec_x ||
-        !model->W_dec_h || !model->b_dec || !model->W_out || !model->b_out) {
-        die("seq2seq parameter allocation failed");
-    }
 
     tensor_fill_randn(model->E, 0.0f, 0.05f, seed);
     tensor_fill_randn(model->W_enc_x, 0.0f, 0.05f, seed);
     tensor_fill_randn(model->W_enc_h, 0.0f, 0.05f, seed);
     tensor_fill_randn(model->W_dec_x, 0.0f, 0.05f, seed);
     tensor_fill_randn(model->W_dec_h, 0.0f, 0.05f, seed);
+    if (model->attention) {
+        tensor_fill_randn(model->W_att_dec, 0.0f, 0.05f, seed);
+        tensor_fill_randn(model->W_att_enc, 0.0f, 0.05f, seed);
+        tensor_fill_randn(model->v_att, 0.0f, 0.05f, seed);
+        tensor_fill(model->b_att, 0.0f);
+    }
     tensor_fill_randn(model->W_out, 0.0f, 0.05f, seed);
     tensor_fill(model->b_enc, 0.0f);
     tensor_fill(model->b_dec, 0.0f);
@@ -339,10 +356,17 @@ static void seq2seq_model_init(Seq2SeqModel *model, const Seq2SeqOptions *opt, u
     model->params[4] = model->W_dec_x;
     model->params[5] = model->W_dec_h;
     model->params[6] = model->b_dec;
-    model->params[7] = model->W_out;
-    model->params[8] = model->b_out;
+    model->param_count = 7;
+    if (model->attention) {
+        model->params[model->param_count++] = model->W_att_dec;
+        model->params[model->param_count++] = model->W_att_enc;
+        model->params[model->param_count++] = model->b_att;
+        model->params[model->param_count++] = model->v_att;
+    }
+    model->params[model->param_count++] = model->W_out;
+    model->params[model->param_count++] = model->b_out;
 
-    for (int i = 0; i < 9; i++) {
+    for (int i = 0; i < model->param_count; i++) {
         model->velocity[i] = tensor_create(model->params[i]->rows, model->params[i]->cols, 0);
         model->adam_m1[i] = tensor_create(model->params[i]->rows, model->params[i]->cols, 0);
         model->adam_m2[i] = tensor_create(model->params[i]->rows, model->params[i]->cols, 0);
@@ -354,7 +378,7 @@ static void seq2seq_model_free(Seq2SeqModel *model) {
     if (!model) {
         return;
     }
-    for (int i = 0; i < 9; i++) {
+    for (int i = 0; i < model->param_count; i++) {
         tensor_free(model->params[i]);
         tensor_free(model->velocity[i]);
         tensor_free(model->adam_m1[i]);
@@ -368,7 +392,7 @@ static void seq2seq_print_architecture(const Seq2SeqModel *model) {
     printf("arch: task=reverse digit sequences with BOS/EOS\n");
     printf("arch: encoder=tanh_rnn decoder=tanh_rnn\n");
     printf("arch: bridge=final_encoder_hidden -> decoder_h0\n");
-    printf("arch: attention=%s\n", model->attention ? "dot over encoder states" : "off");
+    printf("arch: attention=%s\n", model->attention ? "learned additive over encoder states" : "off");
     printf("arch: output=%s\n",
            model->attention ? "[decoder_hidden, context] -> vocab logits" : "decoder_hidden -> vocab logits");
 }
@@ -379,9 +403,6 @@ static void seq2seq_batch_init(Seq2SeqBatch *batch, int batch_size, int max_len)
     batch->enc_tokens = (int *)malloc(sizeof(int) * (size_t)batch_size * (size_t)max_len);
     batch->dec_in_tokens = (int *)malloc(sizeof(int) * (size_t)batch_size * (size_t)(max_len + 1));
     batch->dec_tgt_tokens = (int *)malloc(sizeof(int) * (size_t)batch_size * (size_t)(max_len + 1));
-    if (!batch->enc_tokens || !batch->dec_in_tokens || !batch->dec_tgt_tokens) {
-        die("seq2seq batch allocation failed");
-    }
 }
 
 static void seq2seq_batch_free(Seq2SeqBatch *batch) {
@@ -413,9 +434,6 @@ static void seq2seq_eval_set_init(Seq2SeqEvalSet *eval_set,
     eval_set->enc_tokens = (int *)malloc(sizeof(int) * enc_count);
     eval_set->dec_in_tokens = (int *)malloc(sizeof(int) * dec_count);
     eval_set->dec_tgt_tokens = (int *)malloc(sizeof(int) * dec_count);
-    if (!eval_set->seq_lens || !eval_set->enc_tokens || !eval_set->dec_in_tokens || !eval_set->dec_tgt_tokens) {
-        die("seq2seq eval-set allocation failed");
-    }
 
     seq2seq_batch_init(&batch, opt->batch, opt->max_len);
     for (int i = 0; i < num_batches; i++) {
@@ -505,6 +523,26 @@ static void seq2seq_sample_batch(Seq2SeqBatch *batch, unsigned int *seed) {
     }
 }
 
+static Tensor *seq2seq_attention_score(TensorTemps *temps,
+                                       Seq2SeqModel *model,
+                                       Tensor *enc_h,
+                                       Tensor *dec_h) {
+    Tensor *enc_proj = tensor_matmul(enc_h, model->W_att_enc);
+    Tensor *dec_proj = tensor_matmul(dec_h, model->W_att_dec);
+    Tensor *mix = tensor_add(enc_proj, dec_proj);
+    Tensor *bias = tensor_add_bias(mix, model->b_att);
+    Tensor *energy = tensor_tanh(bias);
+    Tensor *score = tensor_matmul(energy, model->v_att);
+
+    temps_push(temps, enc_proj);
+    temps_push(temps, dec_proj);
+    temps_push(temps, mix);
+    temps_push(temps, bias);
+    temps_push(temps, energy);
+    temps_push(temps, score);
+    return score;
+}
+
 static Tensor *seq2seq_attention_context(TensorTemps *temps,
                                          Seq2SeqModel *model,
                                          Tensor **enc_states,
@@ -513,25 +551,13 @@ static Tensor *seq2seq_attention_context(TensorTemps *temps,
     Tensor *scores = NULL;
     Tensor *weights;
     Tensor *context = NULL;
-    const float scale = 1.0f / sqrtf((float)model->hidden);
 
-    /* Attention scores compare the current decoder state against each encoder
-     * hidden state, then softmax turns those scores into a distribution over
+    /* Learned additive attention mixes the current decoder state with each
+     * encoder state, then softmax turns those scores into a distribution over
      * source positions.
      */
     for (int t = 0; t < src_len; t++) {
-        Tensor *prod = tensor_mul_elem(dec_h, enc_states[t]);
-        Tensor *score_mean = tensor_mean_axis(prod, 1);
-        Tensor *score = score_mean;
-        if (scale != 1.0f) {
-            score = tensor_scalar_mul(score_mean, scale);
-            temps_push(temps, prod);
-            temps_push(temps, score_mean);
-            temps_push(temps, score);
-        } else {
-            temps_push(temps, prod);
-            temps_push(temps, score);
-        }
+        Tensor *score = seq2seq_attention_score(temps, model, enc_states[t], dec_h);
 
         if (!scores) {
             scores = score;
@@ -595,9 +621,6 @@ static float seq2seq_train_step(Seq2SeqModel *model,
     int correct = 0;
 
     (void)seed;
-    if (!h || !enc_states) {
-        die("seq2seq train allocation failed");
-    }
     tensor_fill(h, 0.0f);
     temps_push(&temps, h);
 
@@ -676,9 +699,9 @@ static float seq2seq_train_step(Seq2SeqModel *model,
         adam.beta2 = 0.999f;
         adam.eps = 1e-8f;
         adam.timestep = ++model->adam_step;
-        tensor_adam_step(model->params, model->adam_m1, model->adam_m2, 9, &adam);
+        tensor_adam_step(model->params, model->adam_m1, model->adam_m2, model->param_count, &adam);
     } else {
-        tensor_sgd_momentum_step(model->params, model->velocity, 9, opt->lr, 0.9f);
+        tensor_sgd_momentum_step(model->params, model->velocity, model->param_count, opt->lr, 0.9f);
     }
 
     {
@@ -698,10 +721,6 @@ static void seq2seq_predict_batch(Seq2SeqModel *model, const Seq2SeqBatch *batch
     Tensor *h = tensor_create(batch->batch, model->hidden, 0);
     Tensor **enc_states = (Tensor **)malloc(sizeof(Tensor *) * (size_t)batch->seq_len);
     int *prev_tokens = (int *)malloc(sizeof(int) * (size_t)batch->batch);
-
-    if (!h || !enc_states || !prev_tokens) {
-        die("seq2seq predict allocation failed");
-    }
 
     tensor_fill(h, 0.0f);
     temps_push(&temps, h);
@@ -759,9 +778,6 @@ static void seq2seq_eval(Seq2SeqModel *model,
     int exact_correct = 0;
 
     seq2seq_batch_init(&batch, opt->batch, opt->max_len);
-    if (!pred_tokens) {
-        die("seq2seq eval allocation failed");
-    }
 
     /* Reuse the same synthetic holdout set every checkpoint so eval curves are
      * comparable across steps and across separate runs.
@@ -810,10 +826,6 @@ static void seq2seq_decode_example(Seq2SeqModel *model, int seq_len, unsigned in
 
     seq2seq_batch_init(&batch, 1, seq_len);
     batch.seq_len = seq_len;
-
-    if (!pred_tokens || !tgt_tokens) {
-        die("seq2seq decode allocation failed");
-    }
 
     for (int t = 0; t < seq_len; t++) {
         batch.enc_tokens[t] = rand_int(seed, 0, 9);
