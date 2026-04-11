@@ -12,7 +12,7 @@
  * Usage:
  *   ./seq2seq [--steps=N] [--batch=N] [--embed=N]
  *             [--hidden=N] [--lr=FLOAT] [--min-len=N]
- *             [--max-len=N]
+ *             [--max-len=N] [--log=PATH]
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -31,6 +31,7 @@ typedef struct {
     int min_len;
     int max_len;
     float lr;
+    const char *log_path;
 } Seq2SeqOptions;
 
 /* Architecture:
@@ -199,6 +200,7 @@ static void seq2seq_print_usage(const char *prog) {
     printf("  --lr=FLOAT\n");
     printf("  --min-len=N\n");
     printf("  --max-len=N\n");
+    printf("  --log=PATH\n");
 }
 
 static void seq2seq_parse_args(int argc, char **argv, Seq2SeqOptions *opt) {
@@ -209,6 +211,7 @@ static void seq2seq_parse_args(int argc, char **argv, Seq2SeqOptions *opt) {
     opt->min_len = 3;
     opt->max_len = 8;
     opt->lr = 0.03f;
+    opt->log_path = "out/seq2seq_training_log.csv";
 
     for (int i = 1; i < argc; i++) {
         const char *arg = argv[i];
@@ -230,6 +233,8 @@ static void seq2seq_parse_args(int argc, char **argv, Seq2SeqOptions *opt) {
             continue;
         } else if (sscanf(arg, "--max-len=%d", &opt->max_len) == 1) {
             continue;
+        } else if (strncmp(arg, "--log=", 6) == 0) {
+            opt->log_path = argv[i] + 6;
         } else {
             die("unknown option");
         }
@@ -570,6 +575,7 @@ int main(int argc, char **argv) {
     Seq2SeqOptions opt;
     Seq2SeqModel model;
     Seq2SeqBatch batch = {0};
+    FILE *logf;
     unsigned int seed = 1337u;
 
     seq2seq_parse_args(argc, argv, &opt);
@@ -591,6 +597,11 @@ int main(int argc, char **argv) {
            opt.min_len,
            opt.max_len,
            opt.lr);
+    logf = fopen(opt.log_path, "w");
+    if (!logf) {
+        die("failed to open seq2seq log file");
+    }
+    fprintf(logf, "step,seq_len,train_loss,train_tok,eval_tok,eval_seq\n");
     for (int step = 1; step <= opt.steps; step++) {
         float train_loss;
         float token_acc;
@@ -609,10 +620,19 @@ int main(int argc, char **argv) {
                    token_acc,
                    eval_token_acc,
                    eval_exact_acc);
+            fprintf(logf, "%d,%d,%.6f,%.6f,%.6f,%.6f\n",
+                    step,
+                    batch.seq_len,
+                    train_loss,
+                    token_acc,
+                    eval_token_acc,
+                    eval_exact_acc);
+            fflush(logf);
             seq2seq_decode_example(&model, batch.seq_len, &seed);
         }
     }
 
+    fclose(logf);
     seq2seq_batch_free(&batch);
     seq2seq_model_free(&model);
     return 0;

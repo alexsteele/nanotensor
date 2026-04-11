@@ -56,9 +56,16 @@ Useful metrics:
 
 - token accuracy
 - exact-sequence accuracy
+- periodic checkpoint logging to CSV for baseline comparison
 
-For the first pass, periodic training loss plus a few decoded examples is
-enough.
+The current baseline should log:
+
+- `step`
+- `seq_len`
+- `train_loss`
+- `train_tok`
+- `eval_tok`
+- `eval_seq`
 
 ## Scope Boundaries
 
