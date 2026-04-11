@@ -3,9 +3,10 @@
 /*
  * seq2seq.c
  *
- * Minimal seq2seq demo scaffold using nanotensor.
- * - Uses a synthetic digit-sequence reversal task
- * - Plans for a tanh RNN encoder and tanh RNN decoder
+ * Minimal seq2seq demo using nanotensor.
+ * - Trains on a synthetic digit-sequence translation task
+ * - Learns to map each input digit string to its reversed output string
+ * - Uses a tanh RNN encoder and tanh RNN decoder over a tiny BOS/EOS vocabulary
  * - Keeps the first version intentionally small and readable
  *
  * Usage:
@@ -62,25 +63,35 @@ typedef struct {
     int cap;
 } TensorTemps;
 
+typedef struct {
+    int batch;
+    int seq_len;
+    int *enc_tokens;
+    int *dec_in_tokens;
+    int *dec_tgt_tokens;
+} Seq2SeqBatch;
+
 static void seq2seq_print_usage(const char *prog);
 static void seq2seq_parse_args(int argc, char **argv, Seq2SeqOptions *opt);
 static void seq2seq_model_init(Seq2SeqModel *model, const Seq2SeqOptions *opt, unsigned int *seed);
 static void seq2seq_model_free(Seq2SeqModel *model);
 static void seq2seq_print_architecture(const Seq2SeqModel *model);
-static void seq2seq_sample_batch(int *enc_tokens,
-                                 int *dec_in_tokens,
-                                 int *dec_tgt_tokens,
-                                 int batch,
-                                 int seq_len,
-                                 unsigned int *seed);
+static void seq2seq_batch_init(Seq2SeqBatch *batch, int batch_size, int max_len);
+static void seq2seq_batch_free(Seq2SeqBatch *batch);
+static void seq2seq_sample_batch(Seq2SeqBatch *batch, unsigned int *seed);
 static float seq2seq_train_step(Seq2SeqModel *model,
                                 const Seq2SeqOptions *opt,
-                                int seq_len,
-                                int *enc_tokens,
-                                int *dec_in_tokens,
-                                int *dec_tgt_tokens,
+                                const Seq2SeqBatch *batch,
                                 unsigned int *seed,
                                 float *out_token_acc);
+static void seq2seq_predict_batch(Seq2SeqModel *model,
+                                  const Seq2SeqBatch *batch,
+                                  int *pred_tokens);
+static void seq2seq_eval(Seq2SeqModel *model,
+                         const Seq2SeqOptions *opt,
+                         unsigned int *seed,
+                         float *out_token_acc,
+                         float *out_exact_acc);
 static void seq2seq_decode_example(Seq2SeqModel *model, int seq_len, unsigned int *seed);
 
 static void die(const char *msg) {
@@ -158,6 +169,9 @@ static Tensor *seq2seq_rnn_step(TensorTemps *temps,
                                 Tensor *W_x,
                                 Tensor *W_h,
                                 Tensor *b) {
+    /* Shared tanh RNN cell used by both the encoder and decoder:
+     * token ids -> one-hot -> embedding -> input/hidden projections -> tanh hidden state.
+     */
     Tensor *x_onehot = tensor_one_hot(token_ids, batch, VOCAB_SIZE);
     Tensor *embed = tensor_matmul(x_onehot, model->E);
     Tensor *x_proj = tensor_matmul(embed, W_x);
@@ -289,32 +303,46 @@ static void seq2seq_print_architecture(const Seq2SeqModel *model) {
     printf("arch: output=decoder_hidden -> vocab logits\n");
 }
 
-static void seq2seq_sample_batch(int *enc_tokens,
-                                 int *dec_in_tokens,
-                                 int *dec_tgt_tokens,
-                                 int batch,
-                                 int seq_len,
-                                 unsigned int *seed) {
-    for (int b = 0; b < batch; b++) {
-        for (int t = 0; t < seq_len; t++) {
+static void seq2seq_batch_init(Seq2SeqBatch *batch, int batch_size, int max_len) {
+    memset(batch, 0, sizeof(*batch));
+    batch->batch = batch_size;
+    batch->enc_tokens = (int *)malloc(sizeof(int) * (size_t)batch_size * (size_t)max_len);
+    batch->dec_in_tokens = (int *)malloc(sizeof(int) * (size_t)batch_size * (size_t)(max_len + 1));
+    batch->dec_tgt_tokens = (int *)malloc(sizeof(int) * (size_t)batch_size * (size_t)(max_len + 1));
+    if (!batch->enc_tokens || !batch->dec_in_tokens || !batch->dec_tgt_tokens) {
+        die("seq2seq batch allocation failed");
+    }
+}
+
+static void seq2seq_batch_free(Seq2SeqBatch *batch) {
+    if (!batch) {
+        return;
+    }
+    free(batch->enc_tokens);
+    free(batch->dec_in_tokens);
+    free(batch->dec_tgt_tokens);
+    memset(batch, 0, sizeof(*batch));
+}
+
+static void seq2seq_sample_batch(Seq2SeqBatch *batch, unsigned int *seed) {
+    for (int b = 0; b < batch->batch; b++) {
+        for (int t = 0; t < batch->seq_len; t++) {
             int digit = rand_int(seed, 0, 9);
-            enc_tokens[t * batch + b] = digit;
-            dec_tgt_tokens[t * batch + b] = enc_tokens[(seq_len - 1 - t) * batch + b];
+            batch->enc_tokens[t * batch->batch + b] = digit;
+            batch->dec_tgt_tokens[t * batch->batch + b] =
+                batch->enc_tokens[(batch->seq_len - 1 - t) * batch->batch + b];
         }
-        dec_in_tokens[b] = BOS_TOKEN;
-        for (int t = 1; t < seq_len + 1; t++) {
-            dec_in_tokens[t * batch + b] = dec_tgt_tokens[(t - 1) * batch + b];
+        batch->dec_in_tokens[b] = BOS_TOKEN;
+        for (int t = 1; t < batch->seq_len + 1; t++) {
+            batch->dec_in_tokens[t * batch->batch + b] = batch->dec_tgt_tokens[(t - 1) * batch->batch + b];
         }
-        dec_tgt_tokens[seq_len * batch + b] = EOS_TOKEN;
+        batch->dec_tgt_tokens[batch->seq_len * batch->batch + b] = EOS_TOKEN;
     }
 }
 
 static float seq2seq_train_step(Seq2SeqModel *model,
                                 const Seq2SeqOptions *opt,
-                                int seq_len,
-                                int *enc_tokens,
-                                int *dec_in_tokens,
-                                int *dec_tgt_tokens,
+                                const Seq2SeqBatch *batch,
                                 unsigned int *seed,
                                 float *out_token_acc) {
     TensorTemps temps = {0};
@@ -327,10 +355,13 @@ static float seq2seq_train_step(Seq2SeqModel *model,
     tensor_fill(h, 0.0f);
     temps_push(&temps, h);
 
-    for (int t = 0; t < seq_len; t++) {
+    /* Encode the source sequence left-to-right. The final hidden state becomes
+     * the fixed context passed into the decoder.
+     */
+    for (int t = 0; t < batch->seq_len; t++) {
         h = seq2seq_rnn_step(&temps,
                              model,
-                             enc_tokens + t * opt->batch,
+                             batch->enc_tokens + t * batch->batch,
                              opt->batch,
                              h,
                              model->W_enc_x,
@@ -338,10 +369,13 @@ static float seq2seq_train_step(Seq2SeqModel *model,
                              model->b_enc);
     }
 
-    for (int t = 0; t < seq_len + 1; t++) {
+    /* Decode with teacher forcing: each decoder step consumes the previous
+     * ground-truth output token and predicts the next target token.
+     */
+    for (int t = 0; t < batch->seq_len + 1; t++) {
         Tensor *dec_h = seq2seq_rnn_step(&temps,
                                          model,
-                                         dec_in_tokens + t * opt->batch,
+                                         batch->dec_in_tokens + t * batch->batch,
                                          opt->batch,
                                          h,
                                          model->W_dec_x,
@@ -350,7 +384,7 @@ static float seq2seq_train_step(Seq2SeqModel *model,
         Tensor *out_lin = tensor_matmul(dec_h, model->W_out);
         Tensor *logits = tensor_add_bias(out_lin, model->b_out);
         Tensor *probs = tensor_softmax(logits);
-        Tensor *target = tensor_one_hot(dec_tgt_tokens + t * opt->batch, opt->batch, VOCAB_SIZE);
+        Tensor *target = tensor_one_hot(batch->dec_tgt_tokens + t * batch->batch, opt->batch, VOCAB_SIZE);
         Tensor *loss_t = tensor_cross_entropy(probs, target);
 
         temps_push(&temps, out_lin);
@@ -369,15 +403,15 @@ static float seq2seq_train_step(Seq2SeqModel *model,
 
         for (int b = 0; b < opt->batch; b++) {
             int pred = tensor_argmax_row(logits, b);
-            if (pred == dec_tgt_tokens[t * opt->batch + b]) {
+            if (pred == batch->dec_tgt_tokens[t * batch->batch + b]) {
                 correct++;
             }
             total++;
         }
     }
 
-    if (seq_len + 1 > 1) {
-        total_loss = tensor_scalar_mul(total_loss, 1.0f / (float)(seq_len + 1));
+    if (batch->seq_len + 1 > 1) {
+        total_loss = tensor_scalar_mul(total_loss, 1.0f / (float)(batch->seq_len + 1));
         temps_push(&temps, total_loss);
     }
 
@@ -395,48 +429,131 @@ static float seq2seq_train_step(Seq2SeqModel *model,
     }
 }
 
-static void seq2seq_decode_example(Seq2SeqModel *model, int seq_len, unsigned int *seed) {
+static void seq2seq_predict_batch(Seq2SeqModel *model, const Seq2SeqBatch *batch, int *pred_tokens) {
     TensorTemps temps = {0};
-    Tensor *h = tensor_create(1, model->hidden, 0);
-    int *enc_tokens = (int *)malloc(sizeof(int) * (size_t)seq_len);
-    int *pred_tokens = (int *)malloc(sizeof(int) * (size_t)(seq_len + 1));
-    int *tgt_tokens = (int *)malloc(sizeof(int) * (size_t)(seq_len + 1));
-    int bos = BOS_TOKEN;
-    char src[64];
-    char tgt[64];
-    char pred[64];
+    Tensor *h = tensor_create(batch->batch, model->hidden, 0);
+    int *prev_tokens = (int *)malloc(sizeof(int) * (size_t)batch->batch);
 
-    if (!enc_tokens || !pred_tokens || !tgt_tokens) {
-        die("seq2seq decode allocation failed");
+    if (!h || !prev_tokens) {
+        die("seq2seq predict allocation failed");
     }
 
     tensor_fill(h, 0.0f);
     temps_push(&temps, h);
-    for (int t = 0; t < seq_len; t++) {
-        enc_tokens[t] = rand_int(seed, 0, 9);
-    }
-    for (int t = 0; t < seq_len; t++) {
-        h = seq2seq_rnn_step(&temps, model, &enc_tokens[t], 1, h, model->W_enc_x, model->W_enc_h, model->b_enc);
+    /* Rebuild the encoder final state for this batch before greedy decoding. */
+    for (int t = 0; t < batch->seq_len; t++) {
+        h = seq2seq_rnn_step(&temps,
+                             model,
+                             batch->enc_tokens + t * batch->batch,
+                             batch->batch,
+                             h,
+                             model->W_enc_x,
+                             model->W_enc_h,
+                             model->b_enc);
     }
 
-    {
-        int prev = bos;
-        for (int t = 0; t < seq_len + 1; t++) {
-            Tensor *dec_h = seq2seq_rnn_step(&temps, model, &prev, 1, h, model->W_dec_x, model->W_dec_h, model->b_dec);
-            Tensor *out_lin = tensor_matmul(dec_h, model->W_out);
-            Tensor *logits = tensor_add_bias(out_lin, model->b_out);
+    for (int b = 0; b < batch->batch; b++) {
+        prev_tokens[b] = BOS_TOKEN;
+    }
+    /* Greedy autoregressive decode: feed back each predicted token into the
+     * next decoder step.
+     */
+    for (int t = 0; t < batch->seq_len + 1; t++) {
+        Tensor *dec_h = seq2seq_rnn_step(
+            &temps, model, prev_tokens, batch->batch, h, model->W_dec_x, model->W_dec_h, model->b_dec);
+        Tensor *out_lin = tensor_matmul(dec_h, model->W_out);
+        Tensor *logits = tensor_add_bias(out_lin, model->b_out);
 
-            temps_push(&temps, out_lin);
-            temps_push(&temps, logits);
-            pred_tokens[t] = tensor_argmax_row(logits, 0);
-            prev = pred_tokens[t];
-            h = dec_h;
+        temps_push(&temps, out_lin);
+        temps_push(&temps, logits);
+        for (int b = 0; b < batch->batch; b++) {
+            int pred = tensor_argmax_row(logits, b);
+            pred_tokens[t * batch->batch + b] = pred;
+            prev_tokens[b] = pred;
+        }
+        h = dec_h;
+    }
+
+    free(prev_tokens);
+    temps_free_all(&temps);
+}
+
+static void seq2seq_eval(Seq2SeqModel *model,
+                         const Seq2SeqOptions *opt,
+                         unsigned int *seed,
+                         float *out_token_acc,
+                         float *out_exact_acc) {
+    const int eval_batches = 8;
+    Seq2SeqBatch batch = {0};
+    int *pred_tokens = (int *)malloc(sizeof(int) * (size_t)opt->batch * (size_t)(opt->max_len + 1));
+    int total = 0;
+    int correct = 0;
+    int exact_total = 0;
+    int exact_correct = 0;
+
+    seq2seq_batch_init(&batch, opt->batch, opt->max_len);
+    if (!pred_tokens) {
+        die("seq2seq eval allocation failed");
+    }
+
+    for (int i = 0; i < eval_batches; i++) {
+        batch.seq_len = rand_int(seed, opt->min_len, opt->max_len);
+        seq2seq_sample_batch(&batch, seed);
+        seq2seq_predict_batch(model, &batch, pred_tokens);
+
+        for (int b = 0; b < opt->batch; b++) {
+            int match = 1;
+            for (int t = 0; t < batch.seq_len + 1; t++) {
+                int pred = pred_tokens[t * opt->batch + b];
+                int tgt = batch.dec_tgt_tokens[t * opt->batch + b];
+                if (pred == tgt) {
+                    correct++;
+                } else {
+                    match = 0;
+                }
+                total++;
+            }
+            if (match) {
+                exact_correct++;
+            }
+            exact_total++;
         }
     }
 
-    tokens_to_string(enc_tokens, seq_len, src, sizeof(src));
+    if (out_token_acc) {
+        *out_token_acc = total > 0 ? (float)correct / (float)total : 0.0f;
+    }
+    if (out_exact_acc) {
+        *out_exact_acc = exact_total > 0 ? (float)exact_correct / (float)exact_total : 0.0f;
+    }
+
+    seq2seq_batch_free(&batch);
+    free(pred_tokens);
+}
+
+static void seq2seq_decode_example(Seq2SeqModel *model, int seq_len, unsigned int *seed) {
+    Seq2SeqBatch batch = {0};
+    int *pred_tokens = (int *)malloc(sizeof(int) * (size_t)(seq_len + 1));
+    int *tgt_tokens = (int *)malloc(sizeof(int) * (size_t)(seq_len + 1));
+    char src[64];
+    char tgt[64];
+    char pred[64];
+
+    seq2seq_batch_init(&batch, 1, seq_len);
+    batch.seq_len = seq_len;
+
+    if (!pred_tokens || !tgt_tokens) {
+        die("seq2seq decode allocation failed");
+    }
+
     for (int t = 0; t < seq_len; t++) {
-        tgt_tokens[t] = enc_tokens[seq_len - 1 - t];
+        batch.enc_tokens[t] = rand_int(seed, 0, 9);
+    }
+    seq2seq_predict_batch(model, &batch, pred_tokens);
+
+    tokens_to_string(batch.enc_tokens, seq_len, src, sizeof(src));
+    for (int t = 0; t < seq_len; t++) {
+        tgt_tokens[t] = batch.enc_tokens[seq_len - 1 - t];
     }
     tgt_tokens[seq_len] = EOS_TOKEN;
     tokens_to_string(tgt_tokens, seq_len + 1, tgt, sizeof(tgt));
@@ -444,19 +561,16 @@ static void seq2seq_decode_example(Seq2SeqModel *model, int seq_len, unsigned in
 
     printf(" sample: %s -> %s (target %s)\n", src, pred, tgt);
 
-    free(enc_tokens);
+    seq2seq_batch_free(&batch);
     free(pred_tokens);
     free(tgt_tokens);
-    temps_free_all(&temps);
 }
 
 int main(int argc, char **argv) {
     Seq2SeqOptions opt;
     Seq2SeqModel model;
+    Seq2SeqBatch batch = {0};
     unsigned int seed = 1337u;
-    int *enc_tokens;
-    int *dec_in_tokens;
-    int *dec_tgt_tokens;
 
     seq2seq_parse_args(argc, argv, &opt);
     if (opt.steps <= 0) opt.steps = 2000;
@@ -468,12 +582,7 @@ int main(int argc, char **argv) {
     if (opt.lr <= 0.0f) opt.lr = 0.03f;
 
     seq2seq_model_init(&model, &opt, &seed);
-    enc_tokens = (int *)malloc(sizeof(int) * (size_t)opt.batch * (size_t)opt.max_len);
-    dec_in_tokens = (int *)malloc(sizeof(int) * (size_t)opt.batch * (size_t)(opt.max_len + 1));
-    dec_tgt_tokens = (int *)malloc(sizeof(int) * (size_t)opt.batch * (size_t)(opt.max_len + 1));
-    if (!enc_tokens || !dec_in_tokens || !dec_tgt_tokens) {
-        die("seq2seq batch allocation failed");
-    }
+    seq2seq_batch_init(&batch, opt.batch, opt.max_len);
 
     seq2seq_print_architecture(&model);
     printf("opt: steps=%d batch=%d min_len=%d max_len=%d lr=%.4f\n",
@@ -483,25 +592,28 @@ int main(int argc, char **argv) {
            opt.max_len,
            opt.lr);
     for (int step = 1; step <= opt.steps; step++) {
-        int seq_len = rand_int(&seed, opt.min_len, opt.max_len);
         float train_loss;
         float token_acc;
-        seq2seq_sample_batch(enc_tokens, dec_in_tokens, dec_tgt_tokens, opt.batch, seq_len, &seed);
-        train_loss = seq2seq_train_step(
-            &model, &opt, seq_len, enc_tokens, dec_in_tokens, dec_tgt_tokens, &seed, &token_acc);
+        float eval_token_acc;
+        float eval_exact_acc;
+        batch.seq_len = rand_int(&seed, opt.min_len, opt.max_len);
+        seq2seq_sample_batch(&batch, &seed);
+        train_loss = seq2seq_train_step(&model, &opt, &batch, &seed, &token_acc);
         if (step == 1 || step % 100 == 0 || step == opt.steps) {
-            printf("step %4d len %d loss %.6f token_acc %.3f",
+            unsigned int eval_seed = 4242u + (unsigned int)step;
+            seq2seq_eval(&model, &opt, &eval_seed, &eval_token_acc, &eval_exact_acc);
+            printf("step %4d len %d loss %.6f train_tok %.3f eval_tok %.3f eval_seq %.3f",
                    step,
-                   seq_len,
+                   batch.seq_len,
                    train_loss,
-                   token_acc);
-            seq2seq_decode_example(&model, seq_len, &seed);
+                   token_acc,
+                   eval_token_acc,
+                   eval_exact_acc);
+            seq2seq_decode_example(&model, batch.seq_len, &seed);
         }
     }
 
-    free(enc_tokens);
-    free(dec_in_tokens);
-    free(dec_tgt_tokens);
+    seq2seq_batch_free(&batch);
     seq2seq_model_free(&model);
     return 0;
 }
