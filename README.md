@@ -65,6 +65,7 @@ make test        # builds and runs unit tests
 make run         # runs the demo training program
 make rebuild     # forces a clean rebuild of all binaries for this machine
 make mnist-data  # downloads and unpacks raw MNIST IDX files into data/mnist
+make gpt-char    # builds the GPT-like char attention demo
 make ngram       # builds the neural word-level n-gram demo
 make seq2seq     # builds the seq2seq reversal demo
 make autoencoder # builds the MNIST autoencoder demo
@@ -94,6 +95,8 @@ to refresh the checked-in example artifacts from fresh outputs in `out/`.
   Run `make run`.
 - `llm.c`: minimal character-level language model with a Shakespeare helper
   script. See [docs/llm.md](/Users/alex/Code/nanotensor/docs/llm.md).
+- `gpt_char.c`: GPT-like char LM with causal Q/K/V attention. See
+  [docs/gpt_char.md](/Users/alex/Code/nanotensor/docs/gpt_char.md).
 - `skipgram.c`: word2vec-style skip-gram embedding demo with nearest-neighbor
   reports. See [docs/skipgram.md](/Users/alex/Code/nanotensor/docs/skipgram.md).
 - `ngram.c`: neural word-level n-gram language model demo. See

@@ -5,6 +5,7 @@ ngram
 seq2seq
 autoencoder
 word2vec
+gpt_char
 mnist_conv_demo
 tensor_test
 tensor.o
