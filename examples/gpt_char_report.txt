@@ -1,0 +1,11 @@
+gpt_char report
+context=32 dim=32 hidden=64 steps=2000 lr=0.0030
+
+prompt: To be,  Tat, wol se sth, hhila mameers the Co.      I ha;     PGILitasorvestanto wam  ay Wo. th lonthe
+
+prompt: What than wo   th cetoro wathatha Andou At f yoamaivan, O, me Then Cpouilerricerthise hanghs mul  so 
+
+prompt: KING for ow meathouress, wed ou Sosh I   thoushofayous, t wh:   Anchise chenabus, me nthintwh tey Wh.
+
+prompt: ROMEO th lerayoroyou. s B.  MHece an? ich, sullere itowhenthe toowhee tthetond ore ndhaththh ashand, I
+
