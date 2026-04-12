@@ -11,11 +11,13 @@ adjacent commits are more than 1 hour apart, then sum the first-to-last span wit
 | 2026-02-21 |        0.98h |        2259 |            22 |
 | 2026-04-10 |        2.42h |        1586 |           201 |
 | 2026-04-11 |        4.08h |        2545 |           828 |
+| 2026-04-12 |        0.05h |         842 |             3 |
 
-LOC - 6378
+LOC - 7153
 
 - tensor.c: 1658
 - seq2seq.c: 1000
+- gpt_char.c: 775
 - ngram.c: 669
 - tensor_test.c: 612
 - convnet.c: 553
@@ -25,6 +27,16 @@ LOC - 6378
 - vocab.c: 333
 - mnist.c: 136
 - demo.c: 144
+
+## 2026-04-12
+
+- Added a new `gpt_char.c` demo implementing a minimal GPT-like character
+  language model with explicit causal Q/K/V self-attention, residual
+  connections, layernorm, and a small feed-forward block.
+- Added `docs/gpt_char.md`, Makefile targets for building and running the new
+  demo, and README indexing for the GPT-style model.
+- Generated and checked in an initial `examples/gpt_char_report.txt` artifact
+  so the new demo already has a human-readable sample output path.
 
 ## 2026-04-11
 
