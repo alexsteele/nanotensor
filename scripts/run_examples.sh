@@ -25,3 +25,10 @@ cp out/ngram_report.txt examples/ngram_report.txt
 ./mnist_conv_demo --epochs=5 --log=out/mnist_training_log.csv
 "$PYTHON_BIN" scripts/plot_training_loss.py out/mnist_training_log.csv out/mnist_plot_smoke.png
 cp out/mnist_plot_smoke.png examples/mnist_plot_smoke.png
+
+./mnist_resnet_demo --epochs=5 --batch=256 --dim=16 --hidden=32 --opt=adam --lr=0.001 \
+  --train-limit=512 --test-limit=256 --log=out/mnist_resnet_example_log.csv
+"$PYTHON_BIN" scripts/plot_training_loss.py \
+  out/mnist_resnet_example_log.csv out/mnist_resnet_example_loss.png
+cp out/mnist_resnet_example_loss.png examples/mnist_resnet_example_loss.png
+cp out/mnist_resnet_example_log.csv examples/mnist_resnet_example_log.csv

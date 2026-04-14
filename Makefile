@@ -44,8 +44,11 @@ seq2seq: seq2seq.c tensor.h $(LIB)
 autoencoder: autoencoder.c mnist.c mnist.h tensor.h $(LIB)
 	$(CC) $(CFLAGS) autoencoder.c mnist.c $(LIB) -lm -o autoencoder
 
-mnist-conv: convnet.c mnist.c mnist.h tensor.h $(LIB)
-	$(CC) $(CFLAGS) convnet.c mnist.c $(LIB) -lm -o mnist_conv_demo
+mnist-conv: convnet.c mnist.c mnist.h patch.c patch.h tensor.h $(LIB)
+	$(CC) $(CFLAGS) convnet.c mnist.c patch.c $(LIB) -lm -o mnist_conv_demo
+
+mnist-resnet: mnist_resnet.c mnist.c mnist.h patch.c patch.h tensor.h $(LIB)
+	$(CC) $(CFLAGS) mnist_resnet.c mnist.c patch.c $(LIB) -lm -o mnist_resnet_demo
 
 tensor_test: tensor_test.c tensor.h $(LIB)
 	$(CC) $(CFLAGS) tensor_test.c $(LIB) -lm -o tensor_test
@@ -77,6 +80,9 @@ run-autoencoder: autoencoder
 run-mnist-conv: mnist-conv
 	./mnist_conv_demo
 
+run-mnist-resnet: mnist-resnet
+	./mnist_resnet_demo
+
 mnist-data:
 	./scripts/setup_mnist.sh $(MNIST_DIR)
 
@@ -88,15 +94,15 @@ plot-autoencoder:
 
 rebuild:
 	$(MAKE) clean
-	$(MAKE) all llm gpt-char skipgram ngram seq2seq autoencoder mnist-conv tensor_test
+	$(MAKE) all llm gpt-char skipgram ngram seq2seq autoencoder mnist-conv mnist-resnet tensor_test
 
 run-shakespeare:
 	./scripts/run_shakespeare_llm.sh
 
-examples: autoencoder seq2seq skipgram ngram mnist-conv
+examples: autoencoder seq2seq skipgram ngram mnist-conv mnist-resnet
 	PYTHON=$(PYTHON) ./scripts/run_examples.sh
 
 clean:
-	rm -f demo llm gpt_char skipgram ngram seq2seq autoencoder mnist_conv_demo tensor_test $(OBJ) $(LIB) tensor_test_single.bin tensor_test_snapshot.bin
+	rm -f demo llm gpt_char skipgram ngram seq2seq autoencoder mnist_conv_demo mnist_resnet_demo tensor_test $(OBJ) $(LIB) tensor_test_single.bin tensor_test_snapshot.bin
 
-.PHONY: all static test run run-llm run-gpt-char run-skipgram run-ngram run-seq2seq run-autoencoder run-mnist-conv mnist-data plot-loss plot-autoencoder rebuild run-shakespeare examples clean
+.PHONY: all static test run run-llm run-gpt-char run-skipgram run-ngram run-seq2seq run-autoencoder run-mnist-conv run-mnist-resnet mnist-data plot-loss plot-autoencoder rebuild run-shakespeare examples clean

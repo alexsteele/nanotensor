@@ -1,0 +1,13 @@
+# arch: input=28x28x1 im2col=5x5
+# arch: patch_dim=25 patches=576
+# arch: stem=matmul(25->16)+bias+relu
+# arch: residual_blocks=2 block_width=16 ff_hidden=32
+# arch: block=x+linear(relu(linear(layernorm(x))))
+# arch: pool=mean_over_patches head=matmul(16->10)+bias loss=softmax_ce
+# train=512 test=256 batch=256 epochs=5 opt=adam lr=0.0010 momentum=0.900 dim=16 hidden=32
+epoch,train_loss,train_acc,train_error,test_acc,test_error
+1,2.303520,0.160156,0.839844,0.203125,0.796875
+2,2.300819,0.175781,0.824219,0.171875,0.828125
+3,2.298579,0.144531,0.855469,0.144531,0.855469
+4,2.296775,0.177734,0.822266,0.156250,0.843750
+5,2.294517,0.181641,0.818359,0.156250,0.843750
