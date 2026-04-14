@@ -40,7 +40,7 @@ typedef struct {
     Tensor **items;
     int len;
     int cap;
-} TensorList;
+} TensorPtrList;
 
 static int g_default_requires_grad = 0;
 static const uint32_t k_tensor_magic = 0x544e5352U;   /* "TNSR" */
@@ -85,7 +85,7 @@ static void die(const char *msg) {
     exit(1);
 }
 
-static void list_push(TensorList *list, Tensor *t) {
+static void ptr_list_push(TensorPtrList *list, Tensor *t) {
     if (list->len == list->cap) {
         int next_cap = list->cap == 0 ? 16 : list->cap * 2;
         Tensor **next = (Tensor **)realloc(list->items, sizeof(Tensor *) * (size_t)next_cap);
@@ -98,7 +98,7 @@ static void list_push(TensorList *list, Tensor *t) {
     list->items[list->len++] = t;
 }
 
-static int list_contains(const TensorList *list, Tensor *t) {
+static int ptr_list_contains(const TensorPtrList *list, Tensor *t) {
     for (int i = 0; i < list->len; i++) {
         if (list->items[i] == t) {
             return 1;
@@ -177,6 +177,53 @@ void tensor_free(Tensor *t) {
     free(t->grad);
     free(t->parents);
     free(t);
+}
+
+void tensor_list_init(TensorList *list) {
+    if (!list) {
+        die("tensor_list_init: list must not be null");
+    }
+    list->items = NULL;
+    list->len = 0;
+    list->cap = 0;
+}
+
+Tensor *tensor_list_add(TensorList *list, Tensor *t) {
+    if (!list || !t) {
+        die("tensor_list_add: list and tensor must not be null");
+    }
+    if (list->len == list->cap) {
+        int next_cap = list->cap == 0 ? 16 : list->cap * 2;
+        Tensor **next = (Tensor **)realloc(list->items, sizeof(Tensor *) * (size_t)next_cap);
+        if (!next) {
+            die("out of memory");
+        }
+        list->items = next;
+        list->cap = next_cap;
+    }
+    list->items[list->len++] = t;
+    return t;
+}
+
+void tensor_list_clear(TensorList *list) {
+    if (!list) {
+        return;
+    }
+    for (int i = 0; i < list->len; i++) {
+        tensor_free(list->items[i]);
+        list->items[i] = NULL;
+    }
+    list->len = 0;
+}
+
+void tensor_list_free(TensorList *list) {
+    if (!list) {
+        return;
+    }
+    tensor_list_clear(list);
+    free(list->items);
+    list->items = NULL;
+    list->cap = 0;
 }
 
 void tensor_fill(Tensor *t, float value) {
@@ -1524,20 +1571,20 @@ Tensor *tensor_forward(Tensor *output) {
     return output;
 }
 
-static void build_topo(Tensor *t, TensorList *visited, TensorList *topo) {
-    if (list_contains(visited, t)) {
+static void build_topo(Tensor *t, TensorPtrList *visited, TensorPtrList *topo) {
+    if (ptr_list_contains(visited, t)) {
         return;
     }
-    list_push(visited, t);
+    ptr_list_push(visited, t);
     for (int i = 0; i < t->n_parents; i++) {
         build_topo(t->parents[i], visited, topo);
     }
-    list_push(topo, t);
+    ptr_list_push(topo, t);
 }
 
 void tensor_backward(Tensor *loss) {
-    TensorList visited = {0};
-    TensorList topo = {0};
+    TensorPtrList visited = {0};
+    TensorPtrList topo = {0};
     build_topo(loss, &visited, &topo);
 
     for (int i = 0; i < topo.len; i++) {

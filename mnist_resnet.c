@@ -39,14 +39,6 @@ typedef struct {
     Tensor *b1;
     Tensor *W2;
     Tensor *b2;
-
-    Tensor *tmp_norm;
-    Tensor *tmp_ff1_lin;
-    Tensor *tmp_ff1_bias;
-    Tensor *tmp_ff1_act;
-    Tensor *tmp_ff2_lin;
-    Tensor *tmp_ff2_bias;
-    Tensor *tmp_resid;
 } ResidualBlock;
 
 typedef struct {
@@ -65,12 +57,6 @@ typedef struct {
     Tensor *adam_m1[PARAM_COUNT];
     Tensor *adam_m2[PARAM_COUNT];
     int adam_step;
-
-    Tensor *tmp_stem_lin;
-    Tensor *tmp_stem_bias;
-    Tensor *tmp_stem_act;
-    Tensor *tmp_pooled;
-    Tensor *tmp_head_lin;
 } MnistResNetModel;
 
 typedef struct {
@@ -207,25 +193,7 @@ static void residual_block_init(ResidualBlock *block, int dim, int hidden, unsig
     tensor_fill(block->b2, 0.0f);
 }
 
-static void residual_block_clear_cache(ResidualBlock *block) {
-    tensor_free(block->tmp_norm);
-    tensor_free(block->tmp_ff1_lin);
-    tensor_free(block->tmp_ff1_bias);
-    tensor_free(block->tmp_ff1_act);
-    tensor_free(block->tmp_ff2_lin);
-    tensor_free(block->tmp_ff2_bias);
-    tensor_free(block->tmp_resid);
-    block->tmp_norm = NULL;
-    block->tmp_ff1_lin = NULL;
-    block->tmp_ff1_bias = NULL;
-    block->tmp_ff1_act = NULL;
-    block->tmp_ff2_lin = NULL;
-    block->tmp_ff2_bias = NULL;
-    block->tmp_resid = NULL;
-}
-
 static void residual_block_free(ResidualBlock *block) {
-    residual_block_clear_cache(block);
     tensor_free(block->ln_gamma);
     tensor_free(block->ln_beta);
     tensor_free(block->W1);
@@ -235,23 +203,14 @@ static void residual_block_free(ResidualBlock *block) {
     memset(block, 0, sizeof(*block));
 }
 
-static Tensor *residual_block_forward(ResidualBlock *block, Tensor *x) {
-    Tensor *norm = tensor_layernorm(x, block->ln_gamma, block->ln_beta, 1e-5f);
-    Tensor *ff1_lin = tensor_matmul(norm, block->W1);
-    Tensor *ff1_bias = tensor_add_bias(ff1_lin, block->b1);
-    Tensor *ff1_act = tensor_relu(ff1_bias);
-    Tensor *ff2_lin = tensor_matmul(ff1_act, block->W2);
-    Tensor *ff2_bias = tensor_add_bias(ff2_lin, block->b2);
-    Tensor *resid = tensor_add(x, ff2_bias);
-
-    block->tmp_norm = norm;
-    block->tmp_ff1_lin = ff1_lin;
-    block->tmp_ff1_bias = ff1_bias;
-    block->tmp_ff1_act = ff1_act;
-    block->tmp_ff2_lin = ff2_lin;
-    block->tmp_ff2_bias = ff2_bias;
-    block->tmp_resid = resid;
-    return resid;
+static Tensor *residual_block_forward(TensorList *temps, ResidualBlock *block, Tensor *x) {
+    Tensor *norm = tensor_list_add(temps, tensor_layernorm(x, block->ln_gamma, block->ln_beta, 1e-5f));
+    Tensor *ff1_lin = tensor_list_add(temps, tensor_matmul(norm, block->W1));
+    Tensor *ff1_bias = tensor_list_add(temps, tensor_add_bias(ff1_lin, block->b1));
+    Tensor *ff1_act = tensor_list_add(temps, tensor_relu(ff1_bias));
+    Tensor *ff2_lin = tensor_list_add(temps, tensor_matmul(ff1_act, block->W2));
+    Tensor *ff2_bias = tensor_list_add(temps, tensor_add_bias(ff2_lin, block->b2));
+    return tensor_list_add(temps, tensor_add(x, ff2_bias));
 }
 
 static void mnist_resnet_init(MnistResNetModel *model, const ResNetOptions *opt, unsigned int *seed) {
@@ -298,29 +257,11 @@ static void mnist_resnet_init(MnistResNetModel *model, const ResNetOptions *opt,
     }
 }
 
-static void mnist_resnet_clear_cache(MnistResNetModel *model) {
-    tensor_free(model->tmp_stem_lin);
-    tensor_free(model->tmp_stem_bias);
-    tensor_free(model->tmp_stem_act);
-    tensor_free(model->tmp_pooled);
-    tensor_free(model->tmp_head_lin);
-    model->tmp_stem_lin = NULL;
-    model->tmp_stem_bias = NULL;
-    model->tmp_stem_act = NULL;
-    model->tmp_pooled = NULL;
-    model->tmp_head_lin = NULL;
-
-    for (int i = 0; i < N_BLOCKS; i++) {
-        residual_block_clear_cache(&model->blocks[i]);
-    }
-}
-
 static void mnist_resnet_free(MnistResNetModel *model) {
     if (!model) {
         return;
     }
 
-    mnist_resnet_clear_cache(model);
     patch_batch_free(&model->patch_batch);
     tensor_free(model->W_in);
     tensor_free(model->b_in);
@@ -337,23 +278,21 @@ static void mnist_resnet_free(MnistResNetModel *model) {
     memset(model, 0, sizeof(*model));
 }
 
-static Tensor *mnist_resnet_forward(MnistResNetModel *model, Tensor *xcol) {
-    Tensor *x = tensor_matmul(xcol, model->W_in);
-    Tensor *x_bias = tensor_add_bias(x, model->b_in);
-    Tensor *x_act = tensor_relu(x_bias);
+static Tensor *mnist_resnet_forward(TensorList *temps, MnistResNetModel *model, Tensor *xcol) {
+    Tensor *x = tensor_list_add(temps, tensor_matmul(xcol, model->W_in));
+    Tensor *x_bias = tensor_list_add(temps, tensor_add_bias(x, model->b_in));
+    Tensor *x_act = tensor_list_add(temps, tensor_relu(x_bias));
     Tensor *features = x_act;
 
-    model->tmp_stem_lin = x;
-    model->tmp_stem_bias = x_bias;
-    model->tmp_stem_act = x_act;
-
     for (int i = 0; i < N_BLOCKS; i++) {
-        features = residual_block_forward(&model->blocks[i], features);
+        features = residual_block_forward(temps, &model->blocks[i], features);
     }
 
-    model->tmp_pooled = patch_mean_pool_rows(features, model->batch, &model->patch_layout);
-    model->tmp_head_lin = tensor_matmul(model->tmp_pooled, model->W_out);
-    return tensor_add_bias(model->tmp_head_lin, model->b_out);
+    {
+        Tensor *pooled = tensor_list_add(temps, patch_mean_pool_rows(features, model->batch, &model->patch_layout));
+        Tensor *head_lin = tensor_list_add(temps, tensor_matmul(pooled, model->W_out));
+        return tensor_list_add(temps, tensor_add_bias(head_lin, model->b_out));
+    }
 }
 
 static void print_architecture_summary(FILE *out, const char *prefix, const MnistResNetModel *model) {
@@ -381,15 +320,18 @@ static float evaluate_accuracy(const MnistSet *ds, MnistResNetModel *model) {
     int correct = 0;
 
     for (int i = 0; i < n_eval; i += model->batch) {
+        TensorList temps;
         Tensor *xcol;
         Tensor *logits;
+
+        tensor_list_init(&temps);
 
         patch_extract_batch(&model->patch_layout,
                             ds->images + (size_t)i * MNIST_PIXELS,
                             model->batch,
                             model->patch_batch.buffer);
-        xcol = patch_batch_to_tensor(&model->patch_batch);
-        logits = mnist_resnet_forward(model, xcol);
+        xcol = tensor_list_add(&temps, patch_batch_to_tensor(&model->patch_batch));
+        logits = mnist_resnet_forward(&temps, model, xcol);
 
         for (int b = 0; b < model->batch; b++) {
             if (tensor_argmax_row(logits, b) == (int)ds->labels[i + b]) {
@@ -397,9 +339,7 @@ static float evaluate_accuracy(const MnistSet *ds, MnistResNetModel *model) {
             }
         }
 
-        tensor_free(xcol);
-        tensor_free(logits);
-        mnist_resnet_clear_cache(model);
+        tensor_list_free(&temps);
     }
 
     return n_eval > 0 ? (float)correct / (float)n_eval : 0.0f;
@@ -418,20 +358,23 @@ static float train_epoch(MnistResNetModel *model,
     int loss_count = 0;
 
     for (int i = 0; i < n_train; i += model->batch) {
+        TensorList temps;
         Tensor *xcol;
         Tensor *y;
         Tensor *logits;
         Tensor *probs;
         Tensor *loss;
 
+        tensor_list_init(&temps);
+
         mnist_gather_batch(train, indices, i, model->batch, batch_images, batch_labels);
         patch_extract_batch(&model->patch_layout, batch_images, model->batch, model->patch_batch.buffer);
-        xcol = patch_batch_to_tensor(&model->patch_batch);
-        y = make_one_hot_batch(batch_labels, model->batch);
+        xcol = tensor_list_add(&temps, patch_batch_to_tensor(&model->patch_batch));
+        y = tensor_list_add(&temps, make_one_hot_batch(batch_labels, model->batch));
 
-        logits = mnist_resnet_forward(model, xcol);
-        probs = tensor_softmax(logits);
-        loss = tensor_cross_entropy(probs, y);
+        logits = mnist_resnet_forward(&temps, model, xcol);
+        probs = tensor_list_add(&temps, tensor_softmax(logits));
+        loss = tensor_list_add(&temps, tensor_cross_entropy(probs, y));
 
         tensor_backward(loss);
         if (opt_kind == OPT_ADAM) {
@@ -451,12 +394,7 @@ static float train_epoch(MnistResNetModel *model,
         loss_sum += loss->data[0];
         loss_count++;
 
-        tensor_free(xcol);
-        tensor_free(y);
-        tensor_free(logits);
-        tensor_free(probs);
-        tensor_free(loss);
-        mnist_resnet_clear_cache(model);
+        tensor_list_free(&temps);
     }
 
     return loss_count > 0 ? loss_sum / (float)loss_count : 0.0f;
