@@ -50,11 +50,6 @@ typedef struct {
     Tensor *adam_m2[4];
     int adam_step;
     PatchBatch patch_batch;
-    Tensor *tmp_conv_lin;
-    Tensor *tmp_conv_bias;
-    Tensor *tmp_conv_act;
-    Tensor *tmp_patch_logits;
-    Tensor *tmp_patch_logits_bias;
 } MnistConvModel;
 
 static void mnist_model_init(MnistConvModel *model, int batch, int channels, unsigned int *seed);
@@ -67,8 +62,7 @@ static float mnist_model_train_epoch(MnistConvModel *model,
                                      float lr,
                                      OptimizerKind opt_kind,
                                      float momentum);
-static Tensor *mnist_model_forward(MnistConvModel *model, Tensor *xcol);
-static void mnist_model_clear_forward_cache(MnistConvModel *model);
+static Tensor *mnist_model_forward(TensorList *temps, MnistConvModel *model, Tensor *xcol);
 static float evaluate_accuracy(const MnistSet *ds, MnistConvModel *model);
 
 typedef struct {
@@ -223,27 +217,10 @@ static void mnist_model_init(MnistConvModel *model, int batch, int channels, uns
     model->adam_step = 0;
 }
 
-static void mnist_model_clear_forward_cache(MnistConvModel *model) {
-    if (!model) {
-        return;
-    }
-    tensor_free(model->tmp_conv_lin);
-    tensor_free(model->tmp_conv_bias);
-    tensor_free(model->tmp_conv_act);
-    tensor_free(model->tmp_patch_logits);
-    tensor_free(model->tmp_patch_logits_bias);
-    model->tmp_conv_lin = NULL;
-    model->tmp_conv_bias = NULL;
-    model->tmp_conv_act = NULL;
-    model->tmp_patch_logits = NULL;
-    model->tmp_patch_logits_bias = NULL;
-}
-
 static void mnist_model_free(MnistConvModel *model) {
     if (!model) {
         return;
     }
-    mnist_model_clear_forward_cache(model);
     patch_batch_free(&model->patch_batch);
     tensor_free(model->Wc);
     tensor_free(model->bc);
@@ -264,24 +241,13 @@ static void mnist_model_free(MnistConvModel *model) {
     memset(model, 0, sizeof(*model));
 }
 
-static Tensor *forward_logits(MnistConvModel *model, Tensor *x_col) {
-    Tensor *conv_lin = tensor_matmul(x_col, model->Wc);
-    Tensor *conv_bias = tensor_add_bias(conv_lin, model->bc);
-    Tensor *conv_act = tensor_relu(conv_bias);
-    Tensor *patch_logits = tensor_matmul(conv_act, model->Wcls);
-    Tensor *patch_logits_bias = tensor_add_bias(patch_logits, model->bcls);
-    Tensor *logits = patch_mean_pool_rows(patch_logits_bias, model->batch, &model->patch_layout);
-
-    model->tmp_conv_lin = conv_lin;
-    model->tmp_conv_bias = conv_bias;
-    model->tmp_conv_act = conv_act;
-    model->tmp_patch_logits = patch_logits;
-    model->tmp_patch_logits_bias = patch_logits_bias;
-    return logits;
-}
-
-static Tensor *mnist_model_forward(MnistConvModel *model, Tensor *xcol) {
-    return forward_logits(model, xcol);
+static Tensor *mnist_model_forward(TensorList *temps, MnistConvModel *model, Tensor *xcol) {
+    Tensor *conv_lin = tensor_list_add(temps, tensor_matmul(xcol, model->Wc));
+    Tensor *conv_bias = tensor_list_add(temps, tensor_add_bias(conv_lin, model->bc));
+    Tensor *conv_act = tensor_list_add(temps, tensor_relu(conv_bias));
+    Tensor *patch_logits = tensor_list_add(temps, tensor_matmul(conv_act, model->Wcls));
+    Tensor *patch_logits_bias = tensor_list_add(temps, tensor_add_bias(patch_logits, model->bcls));
+    return patch_mean_pool_rows(temps, patch_logits_bias, model->batch, &model->patch_layout);
 }
 
 static void print_architecture_summary(FILE *out,
@@ -304,6 +270,7 @@ static float evaluate_accuracy(const MnistSet *ds,
     int correct = 0;
 
     for (int i = 0; i < n_eval; i += model->batch) {
+        TensorList temps = {0};
         Tensor *xcol;
         Tensor *logits;
 
@@ -311,8 +278,8 @@ static float evaluate_accuracy(const MnistSet *ds,
                             ds->images + (size_t)i * MNIST_PIXELS,
                             model->batch,
                             model->patch_batch.buffer);
-        xcol = patch_batch_to_tensor(&model->patch_batch);
-        logits = mnist_model_forward(model, xcol);
+        xcol = tensor_list_add(&temps, patch_batch_to_tensor(&model->patch_batch));
+        logits = mnist_model_forward(&temps, model, xcol);
 
         for (int b = 0; b < model->batch; b++) {
             int pred = tensor_argmax_row(logits, b);
@@ -321,9 +288,7 @@ static float evaluate_accuracy(const MnistSet *ds,
             }
         }
 
-        tensor_free(xcol);
-        tensor_free(logits);
-        mnist_model_clear_forward_cache(model);
+        tensor_list_free(&temps);
     }
 
     if (n_eval == 0) {
@@ -345,6 +310,7 @@ static float mnist_model_train_epoch(MnistConvModel *model,
     int loss_count = 0;
 
     for (int i = 0; i < n_train; i += model->batch) {
+        TensorList temps = {0};
         Tensor *xcol;
         Tensor *y;
         Tensor *logits;
@@ -353,12 +319,12 @@ static float mnist_model_train_epoch(MnistConvModel *model,
 
         mnist_gather_batch(train, indices, i, model->batch, batch_images, batch_labels);
         patch_extract_batch(&model->patch_layout, batch_images, model->batch, model->patch_batch.buffer);
-        xcol = patch_batch_to_tensor(&model->patch_batch);
-        y = make_one_hot_batch(batch_labels, model->batch);
+        xcol = tensor_list_add(&temps, patch_batch_to_tensor(&model->patch_batch));
+        y = tensor_list_add(&temps, make_one_hot_batch(batch_labels, model->batch));
 
-        logits = mnist_model_forward(model, xcol);
-        probs = tensor_softmax(logits);
-        loss = tensor_cross_entropy(probs, y);
+        logits = mnist_model_forward(&temps, model, xcol);
+        probs = tensor_list_add(&temps, tensor_softmax(logits));
+        loss = tensor_list_add(&temps, tensor_cross_entropy(probs, y));
 
         tensor_backward(loss);
         if (opt_kind == OPT_ADAM) {
@@ -378,12 +344,7 @@ static float mnist_model_train_epoch(MnistConvModel *model,
         loss_sum += loss->data[0];
         loss_count++;
 
-        tensor_free(xcol);
-        tensor_free(y);
-        tensor_free(logits);
-        tensor_free(probs);
-        tensor_free(loss);
-        mnist_model_clear_forward_cache(model);
+        tensor_list_free(&temps);
     }
 
     return loss_count > 0 ? loss_sum / (float)loss_count : 0.0f;

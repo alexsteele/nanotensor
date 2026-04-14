@@ -43,6 +43,9 @@ void patch_extract_batch(const PatchLayout *layout,
 
 Tensor *patch_batch_to_tensor(const PatchBatch *pb);
 Tensor *patch_make_mean_pool_tensor(int batch, const PatchLayout *layout);
-Tensor *patch_mean_pool_rows(Tensor *patch_rows, int batch, const PatchLayout *layout);
+/* Builds the internal pooling tensor and registers both it and the returned
+ * pooled output in `temps`, so they stay alive for autograd.
+ */
+Tensor *patch_mean_pool_rows(TensorList *temps, Tensor *patch_rows, int batch, const PatchLayout *layout);
 
 #endif

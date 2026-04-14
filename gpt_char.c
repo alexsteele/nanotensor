@@ -73,11 +73,7 @@ typedef struct {
     int adam_step;
 } GPTCharModel;
 
-typedef struct {
-    Tensor **items;
-    int len;
-    int cap;
-} TensorTemps;
+typedef TensorList TensorTemps;
 
 static void gpt_char_print_usage(const char *prog);
 static void gpt_char_parse_args(int argc, char **argv, GPTCharOptions *opt);
@@ -164,26 +160,11 @@ static int id_for_char(const int char_to_id[256], char c, int fallback_id) {
 }
 
 static void temps_push(TensorTemps *temps, Tensor *t) {
-    if (temps->len == temps->cap) {
-        int next_cap = temps->cap == 0 ? 64 : temps->cap * 2;
-        Tensor **next = (Tensor **)realloc(temps->items, sizeof(Tensor *) * (size_t)next_cap);
-        if (!next) {
-            die("gpt_char temp allocation failed");
-        }
-        temps->items = next;
-        temps->cap = next_cap;
-    }
-    temps->items[temps->len++] = t;
+    tensor_list_add(temps, t);
 }
 
 static void temps_free_all(TensorTemps *temps) {
-    for (int i = 0; i < temps->len; i++) {
-        tensor_free(temps->items[i]);
-    }
-    free(temps->items);
-    temps->items = NULL;
-    temps->len = 0;
-    temps->cap = 0;
+    tensor_list_free(temps);
 }
 
 static void gpt_char_print_usage(const char *prog) {

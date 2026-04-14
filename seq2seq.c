@@ -79,11 +79,7 @@ typedef struct {
     int adam_step;
 } Seq2SeqModel;
 
-typedef struct {
-    Tensor **items;
-    int len;
-    int cap;
-} TensorTemps;
+typedef TensorList TensorTemps;
 
 typedef struct {
     int batch;
@@ -170,26 +166,11 @@ static int rand_int(unsigned int *seed, int lo, int hi_inclusive) {
 }
 
 static void temps_push(TensorTemps *temps, Tensor *t) {
-    if (temps->len == temps->cap) {
-        int next_cap = temps->cap == 0 ? 64 : temps->cap * 2;
-        Tensor **next = (Tensor **)realloc(temps->items, sizeof(Tensor *) * (size_t)next_cap);
-        if (!next) {
-            die("seq2seq temp allocation failed");
-        }
-        temps->items = next;
-        temps->cap = next_cap;
-    }
-    temps->items[temps->len++] = t;
+    tensor_list_add(temps, t);
 }
 
 static void temps_free_all(TensorTemps *temps) {
-    for (int i = 0; i < temps->len; i++) {
-        tensor_free(temps->items[i]);
-    }
-    free(temps->items);
-    temps->items = NULL;
-    temps->len = 0;
-    temps->cap = 0;
+    tensor_list_free(temps);
 }
 
 static char token_to_char(int token) {

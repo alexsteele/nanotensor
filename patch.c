@@ -113,12 +113,12 @@ Tensor *patch_make_mean_pool_tensor(int batch, const PatchLayout *layout) {
     return pool;
 }
 
-Tensor *patch_mean_pool_rows(Tensor *patch_rows, int batch, const PatchLayout *layout) {
+Tensor *patch_mean_pool_rows(TensorList *temps, Tensor *patch_rows, int batch, const PatchLayout *layout) {
     Tensor *pool;
     Tensor *pooled;
     int expected_rows;
 
-    if (!patch_rows || !layout) {
+    if (!temps || !patch_rows || !layout) {
         die("patch_mean_pool_rows: invalid arguments");
     }
     expected_rows = patch_layout_num_rows(layout, batch);
@@ -129,7 +129,7 @@ Tensor *patch_mean_pool_rows(Tensor *patch_rows, int batch, const PatchLayout *l
     /* TODO: if patch pooling shows up in profiling, hide a cached pool tensor
      * behind this helper instead of rebuilding it per call. */
     pool = patch_make_mean_pool_tensor(batch, layout);
+    tensor_list_add(temps, pool);
     pooled = tensor_matmul(pool, patch_rows);
-    tensor_free(pool);
-    return pooled;
+    return tensor_list_add(temps, pooled);
 }

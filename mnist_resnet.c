@@ -289,7 +289,7 @@ static Tensor *mnist_resnet_forward(TensorList *temps, MnistResNetModel *model, 
     }
 
     {
-        Tensor *pooled = tensor_list_add(temps, patch_mean_pool_rows(features, model->batch, &model->patch_layout));
+        Tensor *pooled = patch_mean_pool_rows(temps, features, model->batch, &model->patch_layout);
         Tensor *head_lin = tensor_list_add(temps, tensor_matmul(pooled, model->W_out));
         return tensor_list_add(temps, tensor_add_bias(head_lin, model->b_out));
     }
