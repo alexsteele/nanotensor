@@ -6,6 +6,7 @@ seq2seq
 autoencoder
 word2vec
 gpt_char
+tensor_bench
 mnist_conv_demo
 mnist_resnet_demo
 tensor_test

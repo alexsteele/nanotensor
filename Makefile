@@ -32,6 +32,9 @@ llm: llm.c tensor.h $(LIB)
 gpt-char: gpt_char.c tensor.h $(LIB)
 	$(CC) $(CFLAGS) gpt_char.c $(LIB) -lm -o gpt_char
 
+bench: tensor_bench.c tensor.h $(LIB)
+	$(CC) $(CFLAGS) tensor_bench.c $(LIB) -lm -o tensor_bench
+
 skipgram: skipgram.c vocab.c vocab.h tensor.h $(LIB)
 	$(CC) $(CFLAGS) skipgram.c vocab.c $(LIB) -lm -o skipgram
 
@@ -65,6 +68,9 @@ run-llm: llm
 run-gpt-char: gpt-char
 	./gpt_char
 
+run-bench: bench
+	./tensor_bench
+
 run-skipgram: skipgram
 	./skipgram
 
@@ -94,7 +100,7 @@ plot-autoencoder:
 
 rebuild:
 	$(MAKE) clean
-	$(MAKE) all llm gpt-char skipgram ngram seq2seq autoencoder mnist-conv mnist-resnet tensor_test
+	$(MAKE) all llm gpt-char bench skipgram ngram seq2seq autoencoder mnist-conv mnist-resnet tensor_test
 
 run-shakespeare:
 	./scripts/run_shakespeare_llm.sh
@@ -103,6 +109,6 @@ examples: autoencoder seq2seq skipgram ngram mnist-conv mnist-resnet
 	PYTHON=$(PYTHON) ./scripts/run_examples.sh
 
 clean:
-	rm -f demo llm gpt_char skipgram ngram seq2seq autoencoder mnist_conv_demo mnist_resnet_demo tensor_test $(OBJ) $(LIB) tensor_test_single.bin tensor_test_snapshot.bin
+	rm -f demo llm gpt_char tensor_bench skipgram ngram seq2seq autoencoder mnist_conv_demo mnist_resnet_demo tensor_test $(OBJ) $(LIB) tensor_test_single.bin tensor_test_snapshot.bin
 
-.PHONY: all static test run run-llm run-gpt-char run-skipgram run-ngram run-seq2seq run-autoencoder run-mnist-conv run-mnist-resnet mnist-data plot-loss plot-autoencoder rebuild run-shakespeare examples clean
+.PHONY: all static test run run-llm run-gpt-char run-bench run-skipgram run-ngram run-seq2seq run-autoencoder run-mnist-conv run-mnist-resnet mnist-data plot-loss plot-autoencoder rebuild run-shakespeare examples clean

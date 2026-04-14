@@ -66,6 +66,7 @@ make run         # runs the demo training program
 make rebuild     # forces a clean rebuild of all binaries for this machine
 make mnist-data  # downloads and unpacks raw MNIST IDX files into data/mnist
 make gpt-char    # builds the GPT-like char attention demo
+make bench       # builds the microbenchmark runner for core tensor ops
 make ngram       # builds the neural word-level n-gram demo
 make seq2seq     # builds the seq2seq reversal demo
 make autoencoder # builds the MNIST autoencoder demo
@@ -105,6 +106,8 @@ to refresh the checked-in example artifacts from fresh outputs in `out/`.
   [docs/ngram.md](/Users/alex/Code/nanotensor/docs/ngram.md).
 - `seq2seq.c`: synthetic digit-sequence reversal demo with fixed-eval
   reporting. See [docs/seq2seq.md](/Users/alex/Code/nanotensor/docs/seq2seq.md).
+- `tensor_bench.c`: microbenchmark table for core ops like matmul, relu,
+  layernorm, and softmax. Run `make run-bench`.
 - `convnet.c`: minimal MNIST conv-like classifier built on `im2col` and shared
   MNIST helpers. See [docs/convnet.md](/Users/alex/Code/nanotensor/docs/convnet.md).
 - `mnist_resnet.c`: MNIST residual patch-network demo with a patch stem, two
