@@ -7,7 +7,7 @@ autoencoder
 word2vec
 gpt_char
 tensor_bench
-.blas_backend_*
+.blas_backend
 mnist_conv_demo
 mnist_resnet_demo
 tensor_test

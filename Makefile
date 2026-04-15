@@ -27,54 +27,58 @@ RECON_OUT ?= out/autoencoder_recon.png
 
 LIB := libtensor.a
 OBJ := tensor.o
-BLAS_MARKER := .blas_backend_$(BLAS)
-BLAS_MARKERS := .blas_backend_none .blas_backend_accelerate .blas_backend_openblas
+BLAS_STATE := .blas_backend
+BINARIES := demo llm gpt_char tensor_bench skipgram ngram seq2seq autoencoder mnist_conv_demo mnist_resnet_demo tensor_test
 
 all: demo
 
 static: $(LIB)
 
-$(BLAS_MARKER):
-	rm -f $(BLAS_MARKERS)
-	printf "%s\n" "$(BLAS)" > $(BLAS_MARKER)
+FORCE:
 
-$(OBJ): tensor.c tensor.h Makefile $(BLAS_MARKER)
+$(BLAS_STATE): FORCE
+	@if [ "$$(cat $(BLAS_STATE) 2>/dev/null)" != "$(BLAS)" ]; then \
+		rm -f $(OBJ) $(LIB) $(BINARIES); \
+		printf "%s\n" "$(BLAS)" > $(BLAS_STATE); \
+	fi
+
+$(OBJ): tensor.c tensor.h Makefile $(BLAS_STATE)
 	$(CC) $(CFLAGS) $(BLAS_CFLAGS) -c tensor.c -o $(OBJ)
 
 $(LIB): $(OBJ)
 	$(AR) $(ARFLAGS) $(LIB) $(OBJ)
 
-demo: demo.c tensor.h $(LIB)
+demo: demo.c tensor.h $(LIB) $(BLAS_STATE)
 	$(CC) $(CFLAGS) demo.c $(LIB) $(BLAS_LDFLAGS) -lm -o demo
 
-llm: llm.c tensor.h $(LIB)
+llm: llm.c tensor.h $(LIB) $(BLAS_STATE)
 	$(CC) $(CFLAGS) llm.c $(LIB) $(BLAS_LDFLAGS) -lm -o llm
 
-gpt-char: gpt_char.c tensor.h $(LIB)
+gpt-char: gpt_char.c tensor.h $(LIB) $(BLAS_STATE)
 	$(CC) $(CFLAGS) gpt_char.c $(LIB) $(BLAS_LDFLAGS) -lm -o gpt_char
 
-bench: tensor_bench.c tensor.h $(LIB)
+bench: tensor_bench.c tensor.h $(LIB) $(BLAS_STATE)
 	$(CC) $(CFLAGS) tensor_bench.c $(LIB) $(BLAS_LDFLAGS) -lm -o tensor_bench
 
-skipgram: skipgram.c vocab.c vocab.h tensor.h $(LIB)
+skipgram: skipgram.c vocab.c vocab.h tensor.h $(LIB) $(BLAS_STATE)
 	$(CC) $(CFLAGS) skipgram.c vocab.c $(LIB) $(BLAS_LDFLAGS) -lm -o skipgram
 
-ngram: ngram.c vocab.c vocab.h tensor.h $(LIB)
+ngram: ngram.c vocab.c vocab.h tensor.h $(LIB) $(BLAS_STATE)
 	$(CC) $(CFLAGS) ngram.c vocab.c $(LIB) $(BLAS_LDFLAGS) -lm -o ngram
 
-seq2seq: seq2seq.c tensor.h $(LIB)
+seq2seq: seq2seq.c tensor.h $(LIB) $(BLAS_STATE)
 	$(CC) $(CFLAGS) seq2seq.c $(LIB) $(BLAS_LDFLAGS) -lm -o seq2seq
 
-autoencoder: autoencoder.c mnist.c mnist.h tensor.h $(LIB)
+autoencoder: autoencoder.c mnist.c mnist.h tensor.h $(LIB) $(BLAS_STATE)
 	$(CC) $(CFLAGS) autoencoder.c mnist.c $(LIB) $(BLAS_LDFLAGS) -lm -o autoencoder
 
-mnist-conv: convnet.c mnist.c mnist.h patch.c patch.h tensor.h $(LIB)
+mnist-conv: convnet.c mnist.c mnist.h patch.c patch.h tensor.h $(LIB) $(BLAS_STATE)
 	$(CC) $(CFLAGS) convnet.c mnist.c patch.c $(LIB) $(BLAS_LDFLAGS) -lm -o mnist_conv_demo
 
-mnist-resnet: mnist_resnet.c mnist.c mnist.h patch.c patch.h tensor.h $(LIB)
+mnist-resnet: mnist_resnet.c mnist.c mnist.h patch.c patch.h tensor.h $(LIB) $(BLAS_STATE)
 	$(CC) $(CFLAGS) mnist_resnet.c mnist.c patch.c $(LIB) $(BLAS_LDFLAGS) -lm -o mnist_resnet_demo
 
-tensor_test: tensor_test.c tensor.h $(LIB)
+tensor_test: tensor_test.c tensor.h $(LIB) $(BLAS_STATE)
 	$(CC) $(CFLAGS) tensor_test.c $(LIB) $(BLAS_LDFLAGS) -lm -o tensor_test
 
 test: tensor_test
@@ -130,6 +134,6 @@ examples: autoencoder seq2seq skipgram ngram mnist-conv mnist-resnet
 	PYTHON=$(PYTHON) ./scripts/run_examples.sh
 
 clean:
-	rm -f demo llm gpt_char tensor_bench skipgram ngram seq2seq autoencoder mnist_conv_demo mnist_resnet_demo tensor_test $(OBJ) $(LIB) tensor_test_single.bin tensor_test_snapshot.bin
+	rm -f $(BINARIES) $(OBJ) $(LIB) $(BLAS_STATE) tensor_test_single.bin tensor_test_snapshot.bin
 
-.PHONY: all static test run run-llm run-gpt-char run-bench run-skipgram run-ngram run-seq2seq run-autoencoder run-mnist-conv run-mnist-resnet mnist-data plot-loss plot-autoencoder rebuild run-shakespeare examples clean
+.PHONY: all static test run run-llm run-gpt-char run-bench run-skipgram run-ngram run-seq2seq run-autoencoder run-mnist-conv run-mnist-resnet mnist-data plot-loss plot-autoencoder rebuild run-shakespeare examples clean FORCE
