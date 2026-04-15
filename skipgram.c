@@ -342,6 +342,7 @@ int main(int argc, char **argv) {
            opt.steps, opt.batch, opt.window, opt.lr);
 
     for (int step = 1; step <= opt.steps; step++) {
+        TensorList temps = {0};
         Tensor *X;
         Tensor *Y;
         Tensor *hidden;
@@ -350,12 +351,12 @@ int main(int argc, char **argv) {
         Tensor *loss;
 
         pick_training_batch(corpus.tokens, corpus.n_tokens, opt.batch, opt.window, center_idx, context_idx, &seed);
-        X = tensor_one_hot(center_idx, opt.batch, corpus.vocab);
-        Y = tensor_one_hot(context_idx, opt.batch, corpus.vocab);
-        hidden = tensor_matmul(X, model.W_in);
-        logits = tensor_matmul(hidden, model.W_out);
-        probs = tensor_softmax(logits);
-        loss = tensor_cross_entropy(probs, Y);
+        X = tensor_list_add(&temps, tensor_one_hot(center_idx, opt.batch, corpus.vocab));
+        Y = tensor_list_add(&temps, tensor_one_hot(context_idx, opt.batch, corpus.vocab));
+        hidden = tensor_list_add(&temps, tensor_matmul(X, model.W_in));
+        logits = tensor_list_add(&temps, tensor_matmul(hidden, model.W_out));
+        probs = tensor_list_add(&temps, tensor_softmax(logits));
+        loss = tensor_list_add(&temps, tensor_cross_entropy(probs, Y));
 
         tensor_backward(loss);
         tensor_sgd_momentum_step(params, model.velocity, 2, opt.lr, 0.9f);
@@ -364,12 +365,7 @@ int main(int argc, char **argv) {
             printf("step %4d loss %.6f\n", step, loss->data[0]);
         }
 
-        tensor_free(X);
-        tensor_free(Y);
-        tensor_free(hidden);
-        tensor_free(logits);
-        tensor_free(probs);
-        tensor_free(loss);
+        tensor_list_free(&temps);
     }
 
     printf("\n--- nearest neighbors ---\n");

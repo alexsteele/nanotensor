@@ -68,13 +68,14 @@ int main(void) {
     const float lr = 0.03f;
 
     for (int epoch = 1; epoch <= epochs; epoch++) {
-        Tensor *h1_lin = tensor_matmul(X, W1);
-        Tensor *h1_bias = tensor_add_bias(h1_lin, b1);
-        Tensor *h1 = tensor_tanh(h1_bias);
-        Tensor *out_lin = tensor_matmul(h1, W2);
-        Tensor *pred = tensor_add_bias(out_lin, b2);
-
-        Tensor *loss = tensor_mse_loss(tensor_forward(pred), Y);
+        TensorList temps = {0};
+        Tensor *h1_lin = tensor_list_add(&temps, tensor_matmul(X, W1));
+        Tensor *h1_bias = tensor_list_add(&temps, tensor_add_bias(h1_lin, b1));
+        Tensor *h1 = tensor_list_add(&temps, tensor_tanh(h1_bias));
+        Tensor *out_lin = tensor_list_add(&temps, tensor_matmul(h1, W2));
+        Tensor *pred = tensor_list_add(&temps, tensor_add_bias(out_lin, b2));
+        Tensor *pred_forward = tensor_list_add(&temps, tensor_forward(pred));
+        Tensor *loss = tensor_list_add(&temps, tensor_mse_loss(pred_forward, Y));
         tensor_backward(loss);
         tensor_sgd_step(params, n_params, lr);
 
@@ -82,30 +83,21 @@ int main(void) {
             printf("epoch %4d  loss %.6f\n", epoch, loss->data[0]);
         }
 
-        tensor_free(h1_lin);
-        tensor_free(h1_bias);
-        tensor_free(h1);
-        tensor_free(out_lin);
-        tensor_free(pred);
-        tensor_free(loss);
+        tensor_list_free(&temps);
     }
 
-    Tensor *h1_lin = tensor_matmul(X, W1);
-    Tensor *h1_bias = tensor_add_bias(h1_lin, b1);
-    Tensor *h1 = tensor_tanh(h1_bias);
-    Tensor *out_lin = tensor_matmul(h1, W2);
-    Tensor *pred = tensor_add_bias(out_lin, b2);
-    Tensor *final_loss = tensor_mse_loss(pred, Y);
+    TensorList temps = {0};
+    Tensor *h1_lin = tensor_list_add(&temps, tensor_matmul(X, W1));
+    Tensor *h1_bias = tensor_list_add(&temps, tensor_add_bias(h1_lin, b1));
+    Tensor *h1 = tensor_list_add(&temps, tensor_tanh(h1_bias));
+    Tensor *out_lin = tensor_list_add(&temps, tensor_matmul(h1, W2));
+    Tensor *pred = tensor_list_add(&temps, tensor_add_bias(out_lin, b2));
+    Tensor *final_loss = tensor_list_add(&temps, tensor_mse_loss(pred, Y));
     float final_loss_value = final_loss->data[0];
 
     printf("final loss %.6f\n", final_loss->data[0]);
 
-    tensor_free(h1_lin);
-    tensor_free(h1_bias);
-    tensor_free(h1);
-    tensor_free(out_lin);
-    tensor_free(pred);
-    tensor_free(final_loss);
+    tensor_list_free(&temps);
 
     if (tensor_snapshot_save(params, n_params, "out/model_snapshot.bin") != 0) {
         fprintf(stderr, "failed to save snapshot\n");
@@ -117,19 +109,15 @@ int main(void) {
         return 1;
     }
 
-    h1_lin = tensor_matmul(X, W1);
-    h1_bias = tensor_add_bias(h1_lin, b1);
-    h1 = tensor_tanh(h1_bias);
-    out_lin = tensor_matmul(h1, W2);
-    pred = tensor_add_bias(out_lin, b2);
-    final_loss = tensor_mse_loss(pred, Y);
+    temps = (TensorList){0};
+    h1_lin = tensor_list_add(&temps, tensor_matmul(X, W1));
+    h1_bias = tensor_list_add(&temps, tensor_add_bias(h1_lin, b1));
+    h1 = tensor_list_add(&temps, tensor_tanh(h1_bias));
+    out_lin = tensor_list_add(&temps, tensor_matmul(h1, W2));
+    pred = tensor_list_add(&temps, tensor_add_bias(out_lin, b2));
+    final_loss = tensor_list_add(&temps, tensor_mse_loss(pred, Y));
     printf("reloaded loss %.6f (was %.6f)\n", final_loss->data[0], final_loss_value);
-    tensor_free(h1_lin);
-    tensor_free(h1_bias);
-    tensor_free(h1);
-    tensor_free(out_lin);
-    tensor_free(pred);
-    tensor_free(final_loss);
+    tensor_list_free(&temps);
 
     tensor_free(W1);
     tensor_free(b1);

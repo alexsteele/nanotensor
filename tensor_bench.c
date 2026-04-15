@@ -60,8 +60,9 @@ static const char *shape_string(const BenchCase *bc, char *buf, size_t buf_size)
 }
 
 static double run_matmul_case(const BenchCase *bc, int warmup_iters, int iters) {
-    Tensor *a = tensor_create(bc->rows, bc->inner, 0);
-    Tensor *b = tensor_create(bc->inner, bc->cols, 0);
+    TensorList tensors = {0};
+    Tensor *a = tensor_list_add(&tensors, tensor_create(bc->rows, bc->inner, 0));
+    Tensor *b = tensor_list_add(&tensors, tensor_create(bc->inner, bc->cols, 0));
     Tensor *out = NULL;
     double start;
     double elapsed;
@@ -81,13 +82,13 @@ static double run_matmul_case(const BenchCase *bc, int warmup_iters, int iters) 
     }
     elapsed = now_seconds() - start;
 
-    tensor_free(a);
-    tensor_free(b);
+    tensor_list_free(&tensors);
     return elapsed;
 }
 
 static double run_relu_case(const BenchCase *bc, int warmup_iters, int iters) {
-    Tensor *x = tensor_create(bc->rows, bc->cols, 0);
+    TensorList tensors = {0};
+    Tensor *x = tensor_list_add(&tensors, tensor_create(bc->rows, bc->cols, 0));
     Tensor *out = NULL;
     double start;
     double elapsed;
@@ -106,14 +107,15 @@ static double run_relu_case(const BenchCase *bc, int warmup_iters, int iters) {
     }
     elapsed = now_seconds() - start;
 
-    tensor_free(x);
+    tensor_list_free(&tensors);
     return elapsed;
 }
 
 static double run_layernorm_case(const BenchCase *bc, int warmup_iters, int iters) {
-    Tensor *x = tensor_create(bc->rows, bc->cols, 0);
-    Tensor *gamma = tensor_create(1, bc->cols, 0);
-    Tensor *beta = tensor_create(1, bc->cols, 0);
+    TensorList tensors = {0};
+    Tensor *x = tensor_list_add(&tensors, tensor_create(bc->rows, bc->cols, 0));
+    Tensor *gamma = tensor_list_add(&tensors, tensor_create(1, bc->cols, 0));
+    Tensor *beta = tensor_list_add(&tensors, tensor_create(1, bc->cols, 0));
     Tensor *out = NULL;
     double start;
     double elapsed;
@@ -134,14 +136,13 @@ static double run_layernorm_case(const BenchCase *bc, int warmup_iters, int iter
     }
     elapsed = now_seconds() - start;
 
-    tensor_free(x);
-    tensor_free(gamma);
-    tensor_free(beta);
+    tensor_list_free(&tensors);
     return elapsed;
 }
 
 static double run_softmax_case(const BenchCase *bc, int warmup_iters, int iters) {
-    Tensor *x = tensor_create(bc->rows, bc->cols, 0);
+    TensorList tensors = {0};
+    Tensor *x = tensor_list_add(&tensors, tensor_create(bc->rows, bc->cols, 0));
     Tensor *out = NULL;
     double start;
     double elapsed;
@@ -160,7 +161,7 @@ static double run_softmax_case(const BenchCase *bc, int warmup_iters, int iters)
     }
     elapsed = now_seconds() - start;
 
-    tensor_free(x);
+    tensor_list_free(&tensors);
     return elapsed;
 }
 

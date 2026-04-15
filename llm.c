@@ -161,7 +161,8 @@ static void charmlp_params(CharMLP *m, Tensor **params, size_t *n_params) {
 
 static int sample_next_char(CharMLP *m, int current_id, float temperature, unsigned int *seed) {
     int idx[1] = {current_id};
-    Tensor *x = make_one_hot(idx, 1, m->vocab);
+    TensorList temps = {0};
+    Tensor *x = tensor_list_add(&temps, make_one_hot(idx, 1, m->vocab));
     Tensor *h1_lin;
     Tensor *h1_bias;
     Tensor *h1;
@@ -175,23 +176,16 @@ static int sample_next_char(CharMLP *m, int current_id, float temperature, unsig
         temperature = 1e-6f;
     }
 
-    h1_lin = tensor_matmul(x, m->W1);
-    h1_bias = tensor_add_bias(h1_lin, m->b1);
-    h1 = tensor_tanh(h1_bias);
-    h2_lin = tensor_matmul(h1, m->W2);
-    logits = tensor_add_bias(h2_lin, m->b2);
-    scaled = tensor_scalar_mul(logits, 1.0f / temperature);
-    probs = tensor_softmax(scaled);
+    h1_lin = tensor_list_add(&temps, tensor_matmul(x, m->W1));
+    h1_bias = tensor_list_add(&temps, tensor_add_bias(h1_lin, m->b1));
+    h1 = tensor_list_add(&temps, tensor_tanh(h1_bias));
+    h2_lin = tensor_list_add(&temps, tensor_matmul(h1, m->W2));
+    logits = tensor_list_add(&temps, tensor_add_bias(h2_lin, m->b2));
+    scaled = tensor_list_add(&temps, tensor_scalar_mul(logits, 1.0f / temperature));
+    probs = tensor_list_add(&temps, tensor_softmax(scaled));
     next = sample_from_probs(probs->data, probs->cols, seed);
 
-    tensor_free(x);
-    tensor_free(h1_lin);
-    tensor_free(h1_bias);
-    tensor_free(h1);
-    tensor_free(h2_lin);
-    tensor_free(logits);
-    tensor_free(scaled);
-    tensor_free(probs);
+    tensor_list_free(&temps);
     return next;
 }
 
@@ -267,6 +261,7 @@ int main(int argc, char **argv) {
         int b;
         int *x_idx = (int *)malloc(sizeof(int) * (size_t)batch_size);
         int *y_idx = (int *)malloc(sizeof(int) * (size_t)batch_size);
+        TensorList temps = {0};
         Tensor *X;
         Tensor *Y;
         Tensor *h1_lin;
@@ -293,16 +288,16 @@ int main(int argc, char **argv) {
             y_idx[b] = tokens[pos + 1];
         }
 
-        X = make_one_hot(x_idx, batch_size, vocab);
-        Y = make_one_hot(y_idx, batch_size, vocab);
+        X = tensor_list_add(&temps, make_one_hot(x_idx, batch_size, vocab));
+        Y = tensor_list_add(&temps, make_one_hot(y_idx, batch_size, vocab));
 
-        h1_lin = tensor_matmul(X, model.W1);
-        h1_bias = tensor_add_bias(h1_lin, model.b1);
-        h1 = tensor_tanh(h1_bias);
-        h2_lin = tensor_matmul(h1, model.W2);
-        logits = tensor_add_bias(h2_lin, model.b2);
-        probs = tensor_softmax(logits);
-        loss = tensor_cross_entropy(probs, Y);
+        h1_lin = tensor_list_add(&temps, tensor_matmul(X, model.W1));
+        h1_bias = tensor_list_add(&temps, tensor_add_bias(h1_lin, model.b1));
+        h1 = tensor_list_add(&temps, tensor_tanh(h1_bias));
+        h2_lin = tensor_list_add(&temps, tensor_matmul(h1, model.W2));
+        logits = tensor_list_add(&temps, tensor_add_bias(h2_lin, model.b2));
+        probs = tensor_list_add(&temps, tensor_softmax(logits));
+        loss = tensor_list_add(&temps, tensor_cross_entropy(probs, Y));
 
         tensor_backward(loss);
         tensor_sgd_step(params, n_params, lr);
@@ -311,15 +306,7 @@ int main(int argc, char **argv) {
             printf("step %4d loss %.6f\n", step, loss->data[0]);
         }
 
-        tensor_free(X);
-        tensor_free(Y);
-        tensor_free(h1_lin);
-        tensor_free(h1_bias);
-        tensor_free(h1);
-        tensor_free(h2_lin);
-        tensor_free(logits);
-        tensor_free(probs);
-        tensor_free(loss);
+        tensor_list_free(&temps);
         free(x_idx);
         free(y_idx);
     }
