@@ -58,7 +58,7 @@ typedef struct {
     Tensor *adam_m1[PARAM_COUNT];
     Tensor *adam_m2[PARAM_COUNT];
     int adam_step;
-} MnistResNetModel;
+} ResNetModel;
 
 typedef struct {
     int epochs;
@@ -186,11 +186,11 @@ static Tensor *make_one_hot_batch(const unsigned char *labels, int batch_size) {
     return y;
 }
 
-static Tensor *resnet_add_param(MnistResNetModel *model, Tensor *param) {
+static Tensor *resnet_add_param(ResNetModel *model, Tensor *param) {
     return tensor_list_add(&model->params, param);
 }
 
-static void residual_block_init(MnistResNetModel *model, ResidualBlock *block, int dim, int hidden, unsigned int *seed) {
+static void residual_block_init(ResNetModel *model, ResidualBlock *block, int dim, int hidden, unsigned int *seed) {
     memset(block, 0, sizeof(*block));
     block->ln_gamma = resnet_add_param(model, tensor_create(1, dim, 1));
     block->ln_beta = resnet_add_param(model, tensor_create(1, dim, 1));
@@ -217,7 +217,7 @@ static Tensor *residual_block_forward(TensorList *temps, ResidualBlock *block, T
     return tensor_list_add(temps, tensor_add(x, ff2_bias));
 }
 
-static void resnet_init(MnistResNetModel *model, const ResNetOptions *opt, unsigned int *seed) {
+static void resnet_init(ResNetModel *model, const ResNetOptions *opt, unsigned int *seed) {
     memset(model, 0, sizeof(*model));
     tensor_list_init(&model->params);
     model->patch_layout = patch_layout_make(MNIST_ROWS, MNIST_COLS, 5, 5);
@@ -252,15 +252,15 @@ static void resnet_init(MnistResNetModel *model, const ResNetOptions *opt, unsig
     }
 }
 
-static int resnet_save(const MnistResNetModel *model, const char *path) {
+static int resnet_save(const ResNetModel *model, const char *path) {
     return tensor_list_save(&model->params, path);
 }
 
-static int resnet_load(MnistResNetModel *model, const char *path) {
+static int resnet_load(ResNetModel *model, const char *path) {
     return tensor_list_load(&model->params, path);
 }
 
-static void resnet_free(MnistResNetModel *model) {
+static void resnet_free(ResNetModel *model) {
     if (!model) {
         return;
     }
@@ -275,7 +275,7 @@ static void resnet_free(MnistResNetModel *model) {
     memset(model, 0, sizeof(*model));
 }
 
-static Tensor *resnet_forward(TensorList *temps, MnistResNetModel *model, Tensor *xcol) {
+static Tensor *resnet_forward(TensorList *temps, ResNetModel *model, Tensor *xcol) {
     Tensor *x = tensor_list_add(temps, tensor_matmul(xcol, model->W_in));
     Tensor *x_bias = tensor_list_add(temps, tensor_add_bias(x, model->b_in));
     Tensor *x_act = tensor_list_add(temps, tensor_relu(x_bias));
@@ -292,7 +292,7 @@ static Tensor *resnet_forward(TensorList *temps, MnistResNetModel *model, Tensor
     }
 }
 
-static void print_architecture_summary(FILE *out, const char *prefix, const MnistResNetModel *model) {
+static void print_architecture_summary(FILE *out, const char *prefix, const ResNetModel *model) {
     const char *p = prefix ? prefix : "";
 
     fprintf(out, "%sarch: input=28x28x1 im2col=%dx%d\n",
@@ -312,7 +312,7 @@ static void print_architecture_summary(FILE *out, const char *prefix, const Mnis
     fprintf(out, "%sarch: pool=mean_over_patches head=matmul(%d->10)+bias loss=softmax_ce\n", p, model->dim);
 }
 
-static float evaluate_accuracy(const MnistSet *ds, MnistResNetModel *model) {
+static float evaluate_accuracy(const MnistSet *ds, ResNetModel *model) {
     int n_eval = (ds->n / model->batch) * model->batch;
     int correct = 0;
 
@@ -342,7 +342,7 @@ static float evaluate_accuracy(const MnistSet *ds, MnistResNetModel *model) {
     return n_eval > 0 ? (float)correct / (float)n_eval : 0.0f;
 }
 
-static float train_epoch(MnistResNetModel *model,
+static float train_epoch(ResNetModel *model,
                          const MnistSet *train,
                          const int *indices,
                          float *batch_images,
@@ -406,7 +406,7 @@ int main(int argc, char **argv) {
     unsigned int seed = 1337U;
     MnistSet train;
     MnistSet test;
-    MnistResNetModel model;
+    ResNetModel model;
     int *train_indices;
     float *batch_images;
     unsigned char *batch_labels;
