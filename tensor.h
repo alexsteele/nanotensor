@@ -70,6 +70,7 @@ void tensor_list_free(TensorList *list);
 
 void tensor_set_grad_mode(int enabled);
 int tensor_get_grad_mode(void);
+const char *tensor_matmul_backend_name(void);
 
 void tensor_fill(Tensor *t, float value);
 void tensor_fill_randn(Tensor *t, float mean, float stddev, unsigned int *seed);

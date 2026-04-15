@@ -64,6 +64,7 @@ make             # builds demo linked against libtensor.a
 make test        # builds and runs unit tests
 make run         # runs the demo training program
 make rebuild     # forces a clean rebuild of all binaries for this machine
+make BLAS=accelerate bench # uses Apple Accelerate for matmul on macOS
 make mnist-data  # downloads and unpacks raw MNIST IDX files into data/mnist
 make gpt-char    # builds the GPT-like char attention demo
 make bench       # builds the microbenchmark runner for core tensor ops
@@ -121,3 +122,16 @@ Patch extraction and patch-group mean pooling now live in the shared
 [`patch.h`](/Users/alex/Code/nanotensor/patch.h) /
 [`patch.c`](/Users/alex/Code/nanotensor/patch.c) helper module so patch-based
 MNIST demos can share the same geometry and pooling utilities.
+
+Dense matmul can optionally use a BLAS backend selected at build time:
+
+- `BLAS=none`: current naive C implementation
+- `BLAS=accelerate`: Apple Accelerate on macOS
+- `BLAS=openblas`: CBLAS/OpenBLAS if installed
+
+Example:
+
+```bash
+make BLAS=accelerate bench
+./tensor_bench
+```

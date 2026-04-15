@@ -6,6 +6,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(TENSOR_BLAS_ACCELERATE)
+#include <Accelerate/Accelerate.h>
+#elif defined(TENSOR_USE_BLAS)
+#include <cblas.h>
+#endif
+
 enum {
     OP_NONE = 0,
     OP_ADD,
@@ -46,6 +52,95 @@ static int g_default_requires_grad = 0;
 static const uint32_t k_tensor_magic = 0x544e5352U;   /* "TNSR" */
 static const uint32_t k_snapshot_magic = 0x4e545350U; /* "NTSP" */
 static const uint32_t k_file_version = 1U;
+
+#if defined(TENSOR_USE_BLAS)
+static void matmul_forward_kernel(const Tensor *a, const Tensor *b, Tensor *out) {
+    cblas_sgemm(CblasRowMajor,
+                CblasNoTrans,
+                CblasNoTrans,
+                a->rows,
+                b->cols,
+                a->cols,
+                1.0f,
+                a->data,
+                a->cols,
+                b->data,
+                b->cols,
+                0.0f,
+                out->data,
+                out->cols);
+}
+
+static void matmul_backward_a_kernel(Tensor *a, const Tensor *b, const Tensor *out) {
+    cblas_sgemm(CblasRowMajor,
+                CblasNoTrans,
+                CblasTrans,
+                a->rows,
+                a->cols,
+                b->cols,
+                1.0f,
+                out->grad,
+                out->cols,
+                b->data,
+                b->cols,
+                1.0f,
+                a->grad,
+                a->cols);
+}
+
+static void matmul_backward_b_kernel(const Tensor *a, Tensor *b, const Tensor *out) {
+    cblas_sgemm(CblasRowMajor,
+                CblasTrans,
+                CblasNoTrans,
+                b->rows,
+                b->cols,
+                a->rows,
+                1.0f,
+                a->data,
+                a->cols,
+                out->grad,
+                out->cols,
+                1.0f,
+                b->grad,
+                b->cols);
+}
+#else
+static void matmul_forward_kernel(const Tensor *a, const Tensor *b, Tensor *out) {
+    for (int i = 0; i < a->rows; i++) {
+        for (int j = 0; j < b->cols; j++) {
+            float acc = 0.0f;
+            for (int k = 0; k < a->cols; k++) {
+                acc += a->data[i * a->cols + k] * b->data[k * b->cols + j];
+            }
+            out->data[i * out->cols + j] = acc;
+        }
+    }
+}
+
+static void matmul_backward_a_kernel(Tensor *a, const Tensor *b, const Tensor *out) {
+    for (int i = 0; i < a->rows; i++) {
+        for (int k = 0; k < a->cols; k++) {
+            float acc = 0.0f;
+            for (int j = 0; j < b->cols; j++) {
+                acc += out->grad[i * out->cols + j] * b->data[k * b->cols + j];
+            }
+            a->grad[i * a->cols + k] += acc;
+        }
+    }
+}
+
+static void matmul_backward_b_kernel(const Tensor *a, Tensor *b, const Tensor *out) {
+    for (int k = 0; k < b->rows; k++) {
+        for (int j = 0; j < b->cols; j++) {
+            float acc = 0.0f;
+            for (int i = 0; i < a->rows; i++) {
+                acc += a->data[i * a->cols + k] * out->grad[i * out->cols + j];
+            }
+            b->grad[k * b->cols + j] += acc;
+        }
+    }
+}
+#endif
 
 static int tensor_numel(const Tensor *t) {
     return t->rows * t->cols;
@@ -167,6 +262,16 @@ void tensor_set_grad_mode(int enabled) {
 
 int tensor_get_grad_mode(void) {
     return g_default_requires_grad;
+}
+
+const char *tensor_matmul_backend_name(void) {
+#if defined(TENSOR_BLAS_ACCELERATE)
+    return "accelerate";
+#elif defined(TENSOR_BLAS_OPENBLAS)
+    return "openblas";
+#else
+    return "naive";
+#endif
 }
 
 void tensor_free(Tensor *t) {
@@ -957,28 +1062,12 @@ static void backward_matmul(Tensor *out) {
 
     if (a->requires_grad) {
         ensure_grad(a);
-        for (int i = 0; i < a->rows; i++) {
-            for (int k = 0; k < a->cols; k++) {
-                float acc = 0.0f;
-                for (int j = 0; j < b->cols; j++) {
-                    acc += out->grad[i * out->cols + j] * b->data[k * b->cols + j];
-                }
-                a->grad[i * a->cols + k] += acc;
-            }
-        }
+        matmul_backward_a_kernel(a, b, out);
     }
 
     if (b->requires_grad) {
         ensure_grad(b);
-        for (int k = 0; k < b->rows; k++) {
-            for (int j = 0; j < b->cols; j++) {
-                float acc = 0.0f;
-                for (int i = 0; i < a->rows; i++) {
-                    acc += a->data[i * a->cols + k] * out->grad[i * out->cols + j];
-                }
-                b->grad[k * b->cols + j] += acc;
-            }
-        }
+        matmul_backward_b_kernel(a, b, out);
     }
 }
 
@@ -989,16 +1078,7 @@ Tensor *tensor_matmul(Tensor *a, Tensor *b) {
     Tensor *parents[2] = {a, b};
     int req = infer_requires_grad(parents, 2);
     Tensor *out = tensor_new_op(a->rows, b->cols, req, OP_MATMUL, parents, 2, backward_matmul);
-
-    for (int i = 0; i < a->rows; i++) {
-        for (int j = 0; j < b->cols; j++) {
-            float acc = 0.0f;
-            for (int k = 0; k < a->cols; k++) {
-                acc += a->data[i * a->cols + k] * b->data[k * b->cols + j];
-            }
-            out->data[i * out->cols + j] = acc;
-        }
-    }
+    matmul_forward_kernel(a, b, out);
     return out;
 }
 

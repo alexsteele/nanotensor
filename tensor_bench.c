@@ -232,6 +232,7 @@ int main(int argc, char **argv) {
     }
 
     printf("nanotensor microbench\n");
+    printf("matmul backend: %s\n", tensor_matmul_backend_name());
     printf("warmup iters: %d\n", warmup_iters);
     printf("%-10s %-22s %8s %14s %12s\n", "op", "shape", "iters", "ns/op", "GFLOP/s");
     printf("%-10s %-22s %8s %14s %12s\n", "----------", "----------------------", "--------", "--------------", "------------");
