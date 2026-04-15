@@ -253,11 +253,11 @@ static void mnist_resnet_init(MnistResNetModel *model, const ResNetOptions *opt,
 }
 
 static int mnist_resnet_save(const MnistResNetModel *model, const char *path) {
-    return tensor_list_snapshot_save(&model->params, path);
+    return tensor_list_save(&model->params, path);
 }
 
 static int mnist_resnet_load(MnistResNetModel *model, const char *path) {
-    return tensor_list_snapshot_load(&model->params, path);
+    return tensor_list_load(&model->params, path);
 }
 
 static void mnist_resnet_free(MnistResNetModel *model) {

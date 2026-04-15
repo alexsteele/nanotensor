@@ -331,14 +331,14 @@ void tensor_list_free(TensorList *list) {
     list->cap = 0;
 }
 
-int tensor_list_snapshot_save(const TensorList *list, const char *path) {
+int tensor_list_save(const TensorList *list, const char *path) {
     if (!list) {
         return -1;
     }
     return tensor_snapshot_save(list->items, (size_t)list->len, path);
 }
 
-int tensor_list_snapshot_load(TensorList *list, const char *path) {
+int tensor_list_load(TensorList *list, const char *path) {
     if (!list) {
         return -1;
     }

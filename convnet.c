@@ -13,8 +13,10 @@
  * Usage:
  *   ./mnist_conv_demo [--epochs=N] [--batch=N] [--channels=N]
  *                     [--lr=FLOAT] [--momentum=FLOAT] [--log=PATH]
+ *                     [--snapshot=PATH]
  */
 #include <sys/time.h>
+#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -44,7 +46,7 @@ typedef struct {
     Tensor *bc;
     Tensor *Wcls;
     Tensor *bcls;
-    Tensor *params[4];
+    TensorList params;
     Tensor *velocity[4];
     Tensor *adam_m1[4];
     Tensor *adam_m2[4];
@@ -75,6 +77,7 @@ typedef struct {
     float lr;
     float momentum;
     const char *log_path;
+    const char *snapshot_path;
 } MnistOptions;
 
 static void die(const char *msg) {
@@ -101,6 +104,7 @@ static void print_usage(const char *prog) {
     printf("  --lr=FLOAT\n");
     printf("  --momentum=FLOAT\n");
     printf("  --log=PATH\n");
+    printf("  --snapshot=PATH\n");
 }
 
 static const char *optimizer_name(OptimizerKind kind) {
@@ -124,6 +128,7 @@ static void parse_args(int argc, char **argv, MnistOptions *opt) {
     opt->lr = 0.03f;
     opt->momentum = 0.9f;
     opt->log_path = "out/mnist_training_log.csv";
+    opt->snapshot_path = NULL;
 
     for (int i = 1; i < argc; i++) {
         const char *arg = argv[i];
@@ -156,6 +161,8 @@ static void parse_args(int argc, char **argv, MnistOptions *opt) {
             continue;
         } else if (sscanf(arg, "--log=%1023s", log_path_buf) == 1) {
             opt->log_path = argv[i] + 6;
+        } else if (strncmp(arg, "--snapshot=", 11) == 0) {
+            opt->snapshot_path = argv[i] + 11;
         } else {
             die("unknown option");
         }
@@ -177,20 +184,29 @@ static Tensor *make_one_hot_batch(const unsigned char *labels, int batch_size) {
     return y;
 }
 
+static int file_exists(const char *path) {
+    return path && access(path, F_OK) == 0;
+}
+
+static Tensor *mnist_model_add_param(MnistConvModel *model, Tensor *param) {
+    return tensor_list_add(&model->params, param);
+}
+
 static void mnist_model_init(MnistConvModel *model, int batch, int channels, unsigned int *seed) {
     if (!model) {
         die("mnist_model_init: model is null");
     }
 
     memset(model, 0, sizeof(*model));
+    tensor_list_init(&model->params);
     model->patch_layout = patch_layout_make(MNIST_ROWS, MNIST_COLS, 5, 5);
     model->channels = channels;
     model->batch = batch;
 
-    model->Wc = tensor_create(model->patch_layout.patch_dim, channels, 1);
-    model->bc = tensor_create(1, channels, 1);
-    model->Wcls = tensor_create(channels, N_CLASSES, 1);
-    model->bcls = tensor_create(1, N_CLASSES, 1);
+    model->Wc = mnist_model_add_param(model, tensor_create(model->patch_layout.patch_dim, channels, 1));
+    model->bc = mnist_model_add_param(model, tensor_create(1, channels, 1));
+    model->Wcls = mnist_model_add_param(model, tensor_create(channels, N_CLASSES, 1));
+    model->bcls = mnist_model_add_param(model, tensor_create(1, N_CLASSES, 1));
     model->patch_batch = patch_batch_create(model->patch_layout, batch);
 
     tensor_fill_randn(model->Wc, 0.0f, 0.08f, seed);
@@ -198,23 +214,24 @@ static void mnist_model_init(MnistConvModel *model, int batch, int channels, uns
     tensor_fill(model->bc, 0.0f);
     tensor_fill(model->bcls, 0.0f);
 
-    model->params[0] = model->Wc;
-    model->params[1] = model->bc;
-    model->params[2] = model->Wcls;
-    model->params[3] = model->bcls;
-    model->velocity[0] = tensor_create(model->patch_layout.patch_dim, channels, 0);
-    model->velocity[1] = tensor_create(1, channels, 0);
-    model->velocity[2] = tensor_create(channels, N_CLASSES, 0);
-    model->velocity[3] = tensor_create(1, N_CLASSES, 0);
-    model->adam_m1[0] = tensor_create(model->patch_layout.patch_dim, channels, 0);
-    model->adam_m1[1] = tensor_create(1, channels, 0);
-    model->adam_m1[2] = tensor_create(channels, N_CLASSES, 0);
-    model->adam_m1[3] = tensor_create(1, N_CLASSES, 0);
-    model->adam_m2[0] = tensor_create(model->patch_layout.patch_dim, channels, 0);
-    model->adam_m2[1] = tensor_create(1, channels, 0);
-    model->adam_m2[2] = tensor_create(channels, N_CLASSES, 0);
-    model->adam_m2[3] = tensor_create(1, N_CLASSES, 0);
+    if (model->params.len != 4) {
+        die("mnist_model_init: unexpected param count");
+    }
+    for (int i = 0; i < 4; i++) {
+        Tensor *param = model->params.items[i];
+        model->velocity[i] = tensor_create(param->rows, param->cols, 0);
+        model->adam_m1[i] = tensor_create(param->rows, param->cols, 0);
+        model->adam_m2[i] = tensor_create(param->rows, param->cols, 0);
+    }
     model->adam_step = 0;
+}
+
+static int mnist_model_save(const MnistConvModel *model, const char *path) {
+    return tensor_list_save(&model->params, path);
+}
+
+static int mnist_model_load(MnistConvModel *model, const char *path) {
+    return tensor_list_load(&model->params, path);
 }
 
 static void mnist_model_free(MnistConvModel *model) {
@@ -222,10 +239,7 @@ static void mnist_model_free(MnistConvModel *model) {
         return;
     }
     patch_batch_free(&model->patch_batch);
-    tensor_free(model->Wc);
-    tensor_free(model->bc);
-    tensor_free(model->Wcls);
-    tensor_free(model->bcls);
+    tensor_list_free(&model->params);
     tensor_free(model->velocity[0]);
     tensor_free(model->velocity[1]);
     tensor_free(model->velocity[2]);
@@ -334,11 +348,11 @@ static float mnist_model_train_epoch(MnistConvModel *model,
             adam.beta2 = 0.999f;
             adam.eps = 1e-8f;
             adam.timestep = ++model->adam_step;
-            tensor_adam_step(model->params, model->adam_m1, model->adam_m2, 4, &adam);
+            tensor_adam_step(model->params.items, model->adam_m1, model->adam_m2, (size_t)model->params.len, &adam);
         } else if (opt_kind == OPT_MOMENTUM) {
-            tensor_sgd_momentum_step(model->params, model->velocity, 4, lr, momentum);
+            tensor_sgd_momentum_step(model->params.items, model->velocity, (size_t)model->params.len, lr, momentum);
         } else {
-            tensor_sgd_step(model->params, 4, lr);
+            tensor_sgd_step(model->params.items, (size_t)model->params.len, lr);
         }
 
         loss_sum += loss->data[0];
@@ -379,6 +393,9 @@ int main(int argc, char **argv) {
     }
 
     mnist_model_init(&model, opt.batch, opt.channels, &seed);
+    if (file_exists(opt.snapshot_path) && mnist_model_load(&model, opt.snapshot_path) != 0) {
+        die("failed to load snapshot");
+    }
     train_indices = (int *)malloc(sizeof(int) * (size_t)train.n);
     batch_images = (float *)malloc(sizeof(float) * (size_t)opt.batch * MNIST_PIXELS);
     batch_labels = (unsigned char *)malloc((size_t)opt.batch);
@@ -416,6 +433,9 @@ int main(int argc, char **argv) {
     print_architecture_summary(
         stdout, NULL, model.patch_layout.kernel_h, model.patch_layout.kernel_w, model.channels, model.patch_layout.patches_per_image);
     printf("logging metrics to %s\n", opt.log_path);
+    if (file_exists(opt.snapshot_path)) {
+        printf("loaded snapshot from %s\n", opt.snapshot_path);
+    }
 
     {
         double start_time = now_seconds();
@@ -438,6 +458,13 @@ int main(int argc, char **argv) {
             fflush(log_file);
         }
     }
+    }
+
+    if (opt.snapshot_path && mnist_model_save(&model, opt.snapshot_path) != 0) {
+        die("failed to save snapshot");
+    }
+    if (opt.snapshot_path) {
+        printf("saved snapshot to %s\n", opt.snapshot_path);
     }
 
     fclose(log_file);

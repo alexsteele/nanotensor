@@ -131,7 +131,7 @@ typedef struct TensorList TensorList;
  * - persistent ordered collections such as model parameters
  *
  * Snapshot I/O:
- * - `tensor_list_snapshot_save/load` serializes tensors in insertion order
+ * - `tensor_list_save/load` serializes tensors in insertion order
  * - callers must rebuild the same list in the same order before loading
  */
 struct TensorList {
@@ -147,7 +147,7 @@ void tensor_list_init(TensorList *list);
 Tensor *tensor_list_add(TensorList *list, Tensor *t);
 void tensor_list_clear(TensorList *list);
 void tensor_list_free(TensorList *list);
-int tensor_list_snapshot_save(const TensorList *list, const char *path);
-int tensor_list_snapshot_load(TensorList *list, const char *path);
+int tensor_list_save(const TensorList *list, const char *path);
+int tensor_list_load(TensorList *list, const char *path);
 
 #endif
