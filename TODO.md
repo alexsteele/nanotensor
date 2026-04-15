@@ -25,8 +25,6 @@
 
 - training helpers for running on different machines more cleanly than ad hoc
   scripts
-- add a curated `run_bigdemo.sh` showcase script with stronger best-known demo
-  configs and distinct output artifact names
 - consider extending `tensor_bench.c` with a couple of end-to-end model-shaped
   microbenches once the primitive-op table settles
 - consider caching the internal pool tensor inside `patch_mean_pool_rows(...)`

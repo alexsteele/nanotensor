@@ -73,6 +73,7 @@ make seq2seq     # builds the seq2seq reversal demo
 make autoencoder # builds the MNIST autoencoder demo
 make mnist-conv  # builds the MNIST patch-conv classifier demo
 make resnet      # builds the MNIST residual patch-network demo
+make bigdemo     # runs curated stronger demo configs and prints a summary table
 make examples    # regenerates the demo artifacts under examples/
 ```
 
@@ -91,6 +92,17 @@ make examples
 That target builds the needed binaries and then runs
 [`scripts/run_examples.sh`](/Users/alex/Code/nanotensor/scripts/run_examples.sh)
 to refresh the checked-in example artifacts from fresh outputs in `out/`.
+
+For a heavier curated showcase run with stronger settings and distinct
+`out/bigdemo_*` artifacts, see [docs/bigdemo.md](/Users/alex/Code/nanotensor/docs/bigdemo.md)
+and run:
+
+```bash
+make BLAS=accelerate bigdemo
+```
+
+On macOS this is strongly recommended, since `bigdemo` spends most of its time
+in matmul-heavy training loops and the BLAS backend is much faster.
 
 
 ## Demos

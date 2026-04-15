@@ -130,10 +130,13 @@ rebuild:
 run-shakespeare:
 	./scripts/run_shakespeare_llm.sh
 
+bigdemo: autoencoder seq2seq skipgram ngram mnist-conv resnet
+	PYTHON=$(PYTHON) ./scripts/run_bigdemo.sh
+
 examples: autoencoder seq2seq skipgram ngram mnist-conv resnet
 	PYTHON=$(PYTHON) ./scripts/run_examples.sh
 
 clean:
 	rm -f $(BINARIES) $(OBJ) $(LIB) $(BLAS_STATE) tensor_test_single.bin tensor_test_snapshot.bin
 
-.PHONY: all static test run run-llm run-gpt-char run-bench run-skipgram run-ngram run-seq2seq run-autoencoder run-mnist-conv run-resnet mnist-data plot-loss plot-autoencoder rebuild run-shakespeare examples clean FORCE
+.PHONY: all static test run run-llm run-gpt-char run-bench run-skipgram run-ngram run-seq2seq run-autoencoder run-mnist-conv run-resnet mnist-data plot-loss plot-autoencoder rebuild run-shakespeare bigdemo examples clean FORCE
