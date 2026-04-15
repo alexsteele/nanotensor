@@ -9,24 +9,61 @@ adjacent commits are more than 1 hour apart, then sum the first-to-last span wit
 | Date       | Hours Worked | Lines Added | Lines Removed |
 | ---------- | -----------: | ----------: | ------------: |
 | 2026-02-21 |        0.98h |        2259 |            22 |
-| 2026-04-10 |        2.42h |        1586 |           201 |
-| 2026-04-11 |        4.08h |        2545 |           828 |
-| 2026-04-12 |        0.05h |         842 |             3 |
+| 2026-04-10 |        2.64h |        4763 |           635 |
+| 2026-04-11 |        4.49h |        2646 |          1174 |
+| 2026-04-12 |        0.08h |         855 |             4 |
+| 2026-04-14 |        2.12h |        1792 |           600 |
+| 2026-04-15 |        0.46h |         215 |            31 |
 
-LOC - 7153
+LOC - 8066
 
-- tensor.c: 1658
-- seq2seq.c: 1000
-- gpt_char.c: 775
+- tensor.c: 1799
+- seq2seq.c: 981
+- gpt_char.c: 756
 - ngram.c: 669
 - tensor_test.c: 612
-- convnet.c: 553
+- resnet.c: 519
 - autoencoder.c: 515
-- skipgram.c: 412
-- llm.c: 346
+- convnet.c: 479
+- skipgram.c: 408
+- llm.c: 333
 - vocab.c: 333
+- tensor_bench.c: 259
 - mnist.c: 136
-- demo.c: 144
+- patch.c: 135
+- demo.c: 132
+
+## 2026-04-15
+
+- Added optional BLAS-backed matmul support with clean Makefile backend
+  selection for `none`, `accelerate`, and `openblas`, plus backend reporting in
+  `tensor_bench.c` and a safer rebuild path when switching BLAS modes.
+- Added `tensor_bench.c` as a compact microbenchmark table for matmul, relu,
+  layernorm, and softmax, including shape display, `ns/op`, GFLOP/s estimates,
+  and configurable warmup / iteration counts.
+- Introduced shared patch helpers in `patch.c` / `patch.h`, used them in both
+  the conv-style MNIST demo and the residual patch demo, and fixed the
+  patch-pooling temp lifetime issue by routing pooled intermediates through
+  `TensorList`.
+- Added the residual patch MNIST demo, then simplified it further by renaming
+  `mnist_resnet.c` to `resnet.c`, renaming the binary to `resnet_demo`, and
+  aligning the internal model type and helper names around `ResNetModel`.
+- Added `TensorList` as a clearer ownership tool across more demos, documented
+  its dual role for temp lifetimes and persistent ordered parameter collections,
+  and added `tensor_list_save` / `tensor_list_load` as lean wrappers for
+  ordered model checkpoint I/O.
+- Converted both the MNIST conv demo and the ResNet demo to register model
+  parameters into `TensorList`, then added small model-local save/load helpers
+  with a single `--snapshot=PATH` CLI flow that resumes if a checkpoint already
+  exists and saves back to the same path after training.
+- Refreshed MNIST residual docs and example artifact naming around `resnet`,
+  added `docs/resnet.md`, and kept the checked-in loss/log artifacts aligned
+  with the new naming.
+- Added a curated `make bigdemo` workflow backed by
+  `scripts/run_bigdemo.sh` and `docs/bigdemo.md`, with stronger showcase
+  configs for autoencoder, seq2seq, skip-gram, n-gram, the MNIST conv demo,
+  and the ResNet demo, plus a final summary table and a strong macOS BLAS
+  recommendation for practical runtime.
 
 ## 2026-04-12
 
