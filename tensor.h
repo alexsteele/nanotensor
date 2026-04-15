@@ -6,7 +6,6 @@
 
 typedef struct Tensor Tensor;
 typedef struct TensorAdamOptions TensorAdamOptions;
-typedef struct TensorList TensorList;
 
 struct Tensor {
     int rows;
@@ -36,37 +35,12 @@ struct TensorAdamOptions {
     int timestep;
 };
 
-/* Ownership helper for groups of tensors with the same lifetime.
- *
- * Initialization:
- * - stack locals may be zero-initialized directly with `TensorList list = {0};`
- * - or initialized explicitly with `tensor_list_init(&list)`
- *
- * Ownership:
- * - once a tensor is added with `tensor_list_add`, that list becomes
- *   responsible for freeing it via `tensor_list_clear` or `tensor_list_free`
- * - tensors tracked by a list should not also be freed manually
- */
-struct TensorList {
-    Tensor **items;
-    int len;
-    int cap;
-};
-
 Tensor *tensor_create(int rows, int cols, int requires_grad);
 Tensor *tensor_from_array(int rows, int cols, const float *values, int requires_grad);
 Tensor *tensor_create_default(int rows, int cols);
 Tensor *tensor_from_array_default(int rows, int cols, const float *values);
 Tensor *tensor_cpy(Tensor *a);
 void tensor_free(Tensor *t);
-
-void tensor_list_init(TensorList *list);
-/* Adds `t` to `list` and returns it for convenient inline use.
- * The list takes ownership of the tensor pointer.
- */
-Tensor *tensor_list_add(TensorList *list, Tensor *t);
-void tensor_list_clear(TensorList *list);
-void tensor_list_free(TensorList *list);
 
 void tensor_set_grad_mode(int enabled);
 int tensor_get_grad_mode(void);
@@ -138,5 +112,42 @@ void tensor_adam_step(Tensor **params,
                       Tensor **m2,
                       size_t n_params,
                       const TensorAdamOptions *opt);
+
+typedef struct TensorList TensorList;
+
+/* Ownership helper for ordered groups of owned tensors.
+ *
+ * Initialization:
+ * - stack locals may be zero-initialized directly with `TensorList list = {0};`
+ * - or initialized explicitly with `tensor_list_init(&list)`
+ *
+ * Ownership:
+ * - once a tensor is added with `tensor_list_add`, that list becomes
+ *   responsible for freeing it via `tensor_list_clear` or `tensor_list_free`
+ * - tensors tracked by a list should not also be freed manually
+ *
+ * Common uses:
+ * - temporary tensors that share one lifetime
+ * - persistent ordered collections such as model parameters
+ *
+ * Snapshot I/O:
+ * - `tensor_list_snapshot_save/load` serializes tensors in insertion order
+ * - callers must rebuild the same list in the same order before loading
+ */
+struct TensorList {
+    Tensor **items;
+    int len;
+    int cap;
+};
+
+void tensor_list_init(TensorList *list);
+/* Adds `t` to `list` and returns it for convenient inline use.
+ * The list takes ownership of the tensor pointer.
+ */
+Tensor *tensor_list_add(TensorList *list, Tensor *t);
+void tensor_list_clear(TensorList *list);
+void tensor_list_free(TensorList *list);
+int tensor_list_snapshot_save(const TensorList *list, const char *path);
+int tensor_list_snapshot_load(TensorList *list, const char *path);
 
 #endif
