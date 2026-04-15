@@ -1,6 +1,6 @@
-# MNIST ResNet
+# ResNet
 
-`mnist_resnet.c` is a small residual patch-network demo for MNIST.
+`resnet.c` is a small residual patch-network demo for MNIST.
 
 It is not a full spatial CNN ResNet. Instead, it keeps the current 2D tensor
 setup and applies residual MLP blocks over extracted image patches.
@@ -51,8 +51,8 @@ Defaults in the current demo are:
 Build and run:
 
 ```bash
-make mnist-resnet
-./mnist_resnet_demo \
+make resnet
+./resnet_demo \
   --epochs=5 \
   --batch=256 \
   --dim=16 \
@@ -61,23 +61,23 @@ make mnist-resnet
   --lr=0.001 \
   --train-limit=512 \
   --test-limit=256 \
-  --log=out/mnist_resnet_example_log.csv
+  --log=out/resnet_example_log.csv
 ```
 
 Plot the log:
 
 ```bash
 ./.venv/bin/python3 scripts/plot_training_loss.py \
-  out/mnist_resnet_example_log.csv \
-  out/mnist_resnet_example_loss.png
+  out/resnet_example_log.csv \
+  out/resnet_example_loss.png
 ```
 
 ## Artifact
 
 - plot:
-  [examples/mnist_resnet_example_loss.png](/Users/alex/Code/nanotensor/examples/mnist_resnet_example_loss.png)
+  [examples/resnet_example_loss.png](/Users/alex/Code/nanotensor/examples/resnet_example_loss.png)
 - metrics:
-  [examples/mnist_resnet_example_log.csv](/Users/alex/Code/nanotensor/examples/mnist_resnet_example_log.csv)
+  [examples/resnet_example_log.csv](/Users/alex/Code/nanotensor/examples/resnet_example_log.csv)
 
 ## Experiment Log
 

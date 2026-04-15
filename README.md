@@ -72,7 +72,7 @@ make ngram       # builds the neural word-level n-gram demo
 make seq2seq     # builds the seq2seq reversal demo
 make autoencoder # builds the MNIST autoencoder demo
 make mnist-conv  # builds the MNIST patch-conv classifier demo
-make mnist-resnet # builds the MNIST residual patch-network demo
+make resnet      # builds the MNIST residual patch-network demo
 make examples    # regenerates the demo artifacts under examples/
 ```
 
@@ -111,10 +111,10 @@ to refresh the checked-in example artifacts from fresh outputs in `out/`.
   layernorm, and softmax. Run `make run-bench`.
 - `convnet.c`: minimal MNIST conv-like classifier built on `im2col` and shared
   MNIST helpers. See [docs/convnet.md](/Users/alex/Code/nanotensor/docs/convnet.md).
-- `mnist_resnet.c`: MNIST residual patch-network demo with a patch stem, two
+- `resnet.c`: MNIST residual patch-network demo with a patch stem, two
   residual MLP blocks, and mean pooling over patches. Supports smaller
   `--train-limit` / `--test-limit` subsets for faster iteration. See
-  [docs/mnist_resnet.md](/Users/alex/Code/nanotensor/docs/mnist_resnet.md).
+  [docs/resnet.md](/Users/alex/Code/nanotensor/docs/resnet.md).
 - `autoencoder.c`: MNIST MLP autoencoder with reconstruction artifacts. See
   [docs/autoencoder.md](/Users/alex/Code/nanotensor/docs/autoencoder.md).
 

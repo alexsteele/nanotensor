@@ -3,7 +3,7 @@
 #include "tensor.h"
 
 /*
- * mnist_resnet.c
+ * resnet.c
  *
  * Minimal MNIST residual patch-network demo using nanotensor.
  * - Extracts 5x5 image patches with the shared patch helpers
@@ -12,7 +12,7 @@
  * - Mean-pools patch features per image and trains a 10-way classifier
  *
  * Usage:
- *   ./mnist_resnet_demo [--epochs=N] [--batch=N] [--dim=N] [--hidden=N]
+ *   ./resnet_demo [--epochs=N] [--batch=N] [--dim=N] [--hidden=N]
  *                       [--opt=sgd|momentum|adam] [--lr=FLOAT]
  *                       [--momentum=FLOAT] [--train-limit=N]
  *                       [--test-limit=N] [--log=PATH] [--snapshot=PATH]
@@ -123,7 +123,7 @@ static void parse_args(int argc, char **argv, ResNetOptions *opt) {
     opt->opt_kind = OPT_ADAM;
     opt->lr = 0.001f;
     opt->momentum = 0.9f;
-    opt->log_path = "out/mnist_resnet_training_log.csv";
+    opt->log_path = "out/resnet_training_log.csv";
     opt->snapshot_path = NULL;
 
     for (int i = 1; i < argc; i++) {
@@ -186,18 +186,18 @@ static Tensor *make_one_hot_batch(const unsigned char *labels, int batch_size) {
     return y;
 }
 
-static Tensor *mnist_resnet_add_param(MnistResNetModel *model, Tensor *param) {
+static Tensor *resnet_add_param(MnistResNetModel *model, Tensor *param) {
     return tensor_list_add(&model->params, param);
 }
 
 static void residual_block_init(MnistResNetModel *model, ResidualBlock *block, int dim, int hidden, unsigned int *seed) {
     memset(block, 0, sizeof(*block));
-    block->ln_gamma = mnist_resnet_add_param(model, tensor_create(1, dim, 1));
-    block->ln_beta = mnist_resnet_add_param(model, tensor_create(1, dim, 1));
-    block->W1 = mnist_resnet_add_param(model, tensor_create(dim, hidden, 1));
-    block->b1 = mnist_resnet_add_param(model, tensor_create(1, hidden, 1));
-    block->W2 = mnist_resnet_add_param(model, tensor_create(hidden, dim, 1));
-    block->b2 = mnist_resnet_add_param(model, tensor_create(1, dim, 1));
+    block->ln_gamma = resnet_add_param(model, tensor_create(1, dim, 1));
+    block->ln_beta = resnet_add_param(model, tensor_create(1, dim, 1));
+    block->W1 = resnet_add_param(model, tensor_create(dim, hidden, 1));
+    block->b1 = resnet_add_param(model, tensor_create(1, hidden, 1));
+    block->W2 = resnet_add_param(model, tensor_create(hidden, dim, 1));
+    block->b2 = resnet_add_param(model, tensor_create(1, dim, 1));
 
     tensor_fill(block->ln_gamma, 1.0f);
     tensor_fill(block->ln_beta, 0.0f);
@@ -217,7 +217,7 @@ static Tensor *residual_block_forward(TensorList *temps, ResidualBlock *block, T
     return tensor_list_add(temps, tensor_add(x, ff2_bias));
 }
 
-static void mnist_resnet_init(MnistResNetModel *model, const ResNetOptions *opt, unsigned int *seed) {
+static void resnet_init(MnistResNetModel *model, const ResNetOptions *opt, unsigned int *seed) {
     memset(model, 0, sizeof(*model));
     tensor_list_init(&model->params);
     model->patch_layout = patch_layout_make(MNIST_ROWS, MNIST_COLS, 5, 5);
@@ -226,8 +226,8 @@ static void mnist_resnet_init(MnistResNetModel *model, const ResNetOptions *opt,
     model->dim = opt->dim;
     model->hidden = opt->hidden;
 
-    model->W_in = mnist_resnet_add_param(model, tensor_create(model->patch_layout.patch_dim, opt->dim, 1));
-    model->b_in = mnist_resnet_add_param(model, tensor_create(1, opt->dim, 1));
+    model->W_in = resnet_add_param(model, tensor_create(model->patch_layout.patch_dim, opt->dim, 1));
+    model->b_in = resnet_add_param(model, tensor_create(1, opt->dim, 1));
     tensor_fill_randn(model->W_in, 0.0f, 0.08f, seed);
     tensor_fill(model->b_in, 0.0f);
 
@@ -235,13 +235,13 @@ static void mnist_resnet_init(MnistResNetModel *model, const ResNetOptions *opt,
         residual_block_init(model, &model->blocks[i], opt->dim, opt->hidden, seed);
     }
 
-    model->W_out = mnist_resnet_add_param(model, tensor_create(opt->dim, N_CLASSES, 1));
-    model->b_out = mnist_resnet_add_param(model, tensor_create(1, N_CLASSES, 1));
+    model->W_out = resnet_add_param(model, tensor_create(opt->dim, N_CLASSES, 1));
+    model->b_out = resnet_add_param(model, tensor_create(1, N_CLASSES, 1));
     tensor_fill_randn(model->W_out, 0.0f, 0.08f, seed);
     tensor_fill(model->b_out, 0.0f);
 
     if (model->params.len != PARAM_COUNT) {
-        die("mnist_resnet_init: unexpected param count");
+        die("resnet_init: unexpected param count");
     }
 
     for (int i = 0; i < PARAM_COUNT; i++) {
@@ -252,15 +252,15 @@ static void mnist_resnet_init(MnistResNetModel *model, const ResNetOptions *opt,
     }
 }
 
-static int mnist_resnet_save(const MnistResNetModel *model, const char *path) {
+static int resnet_save(const MnistResNetModel *model, const char *path) {
     return tensor_list_save(&model->params, path);
 }
 
-static int mnist_resnet_load(MnistResNetModel *model, const char *path) {
+static int resnet_load(MnistResNetModel *model, const char *path) {
     return tensor_list_load(&model->params, path);
 }
 
-static void mnist_resnet_free(MnistResNetModel *model) {
+static void resnet_free(MnistResNetModel *model) {
     if (!model) {
         return;
     }
@@ -275,7 +275,7 @@ static void mnist_resnet_free(MnistResNetModel *model) {
     memset(model, 0, sizeof(*model));
 }
 
-static Tensor *mnist_resnet_forward(TensorList *temps, MnistResNetModel *model, Tensor *xcol) {
+static Tensor *resnet_forward(TensorList *temps, MnistResNetModel *model, Tensor *xcol) {
     Tensor *x = tensor_list_add(temps, tensor_matmul(xcol, model->W_in));
     Tensor *x_bias = tensor_list_add(temps, tensor_add_bias(x, model->b_in));
     Tensor *x_act = tensor_list_add(temps, tensor_relu(x_bias));
@@ -328,7 +328,7 @@ static float evaluate_accuracy(const MnistSet *ds, MnistResNetModel *model) {
                             model->batch,
                             model->patch_batch.buffer);
         xcol = tensor_list_add(&temps, patch_batch_to_tensor(&model->patch_batch));
-        logits = mnist_resnet_forward(&temps, model, xcol);
+        logits = resnet_forward(&temps, model, xcol);
 
         for (int b = 0; b < model->batch; b++) {
             if (tensor_argmax_row(logits, b) == (int)ds->labels[i + b]) {
@@ -369,7 +369,7 @@ static float train_epoch(MnistResNetModel *model,
         xcol = tensor_list_add(&temps, patch_batch_to_tensor(&model->patch_batch));
         y = tensor_list_add(&temps, make_one_hot_batch(batch_labels, model->batch));
 
-        logits = mnist_resnet_forward(&temps, model, xcol);
+        logits = resnet_forward(&temps, model, xcol);
         probs = tensor_list_add(&temps, tensor_softmax(logits));
         loss = tensor_list_add(&temps, tensor_cross_entropy(probs, y));
 
@@ -424,8 +424,8 @@ int main(int argc, char **argv) {
         die("dataset too small for chosen batch size");
     }
 
-    mnist_resnet_init(&model, &opt, &seed);
-    if (file_exists(opt.snapshot_path) && mnist_resnet_load(&model, opt.snapshot_path) != 0) {
+    resnet_init(&model, &opt, &seed);
+    if (file_exists(opt.snapshot_path) && resnet_load(&model, opt.snapshot_path) != 0) {
         die("failed to load snapshot");
     }
     train_indices = (int *)malloc(sizeof(int) * (size_t)train.n);
@@ -501,7 +501,7 @@ int main(int argc, char **argv) {
         }
     }
 
-    if (opt.snapshot_path && mnist_resnet_save(&model, opt.snapshot_path) != 0) {
+    if (opt.snapshot_path && resnet_save(&model, opt.snapshot_path) != 0) {
         die("failed to save snapshot");
     }
     if (opt.snapshot_path) {
@@ -512,7 +512,7 @@ int main(int argc, char **argv) {
     free(train_indices);
     free(batch_images);
     free(batch_labels);
-    mnist_resnet_free(&model);
+    resnet_free(&model);
     mnist_free(&train);
     mnist_free(&test);
     return 0;

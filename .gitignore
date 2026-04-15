@@ -9,6 +9,7 @@ gpt_char
 tensor_bench
 .blas_backend
 mnist_conv_demo
+resnet_demo
 mnist_resnet_demo
 tensor_test
 tensor.o

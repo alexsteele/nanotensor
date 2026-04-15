@@ -28,7 +28,7 @@ RECON_OUT ?= out/autoencoder_recon.png
 LIB := libtensor.a
 OBJ := tensor.o
 BLAS_STATE := .blas_backend
-BINARIES := demo llm gpt_char tensor_bench skipgram ngram seq2seq autoencoder mnist_conv_demo mnist_resnet_demo tensor_test
+BINARIES := demo llm gpt_char tensor_bench skipgram ngram seq2seq autoencoder mnist_conv_demo resnet_demo mnist_resnet_demo tensor_test
 
 all: demo
 
@@ -75,8 +75,8 @@ autoencoder: autoencoder.c mnist.c mnist.h tensor.h $(LIB) $(BLAS_STATE)
 mnist-conv: convnet.c mnist.c mnist.h patch.c patch.h tensor.h $(LIB) $(BLAS_STATE)
 	$(CC) $(CFLAGS) convnet.c mnist.c patch.c $(LIB) $(BLAS_LDFLAGS) -lm -o mnist_conv_demo
 
-mnist-resnet: mnist_resnet.c mnist.c mnist.h patch.c patch.h tensor.h $(LIB) $(BLAS_STATE)
-	$(CC) $(CFLAGS) mnist_resnet.c mnist.c patch.c $(LIB) $(BLAS_LDFLAGS) -lm -o mnist_resnet_demo
+resnet: resnet.c mnist.c mnist.h patch.c patch.h tensor.h $(LIB) $(BLAS_STATE)
+	$(CC) $(CFLAGS) resnet.c mnist.c patch.c $(LIB) $(BLAS_LDFLAGS) -lm -o resnet_demo
 
 tensor_test: tensor_test.c tensor.h $(LIB) $(BLAS_STATE)
 	$(CC) $(CFLAGS) tensor_test.c $(LIB) $(BLAS_LDFLAGS) -lm -o tensor_test
@@ -111,8 +111,8 @@ run-autoencoder: autoencoder
 run-mnist-conv: mnist-conv
 	./mnist_conv_demo
 
-run-mnist-resnet: mnist-resnet
-	./mnist_resnet_demo
+run-resnet: resnet
+	./resnet_demo
 
 mnist-data:
 	./scripts/setup_mnist.sh $(MNIST_DIR)
@@ -125,15 +125,15 @@ plot-autoencoder:
 
 rebuild:
 	$(MAKE) clean
-	$(MAKE) all llm gpt-char bench skipgram ngram seq2seq autoencoder mnist-conv mnist-resnet tensor_test
+	$(MAKE) all llm gpt-char bench skipgram ngram seq2seq autoencoder mnist-conv resnet tensor_test
 
 run-shakespeare:
 	./scripts/run_shakespeare_llm.sh
 
-examples: autoencoder seq2seq skipgram ngram mnist-conv mnist-resnet
+examples: autoencoder seq2seq skipgram ngram mnist-conv resnet
 	PYTHON=$(PYTHON) ./scripts/run_examples.sh
 
 clean:
 	rm -f $(BINARIES) $(OBJ) $(LIB) $(BLAS_STATE) tensor_test_single.bin tensor_test_snapshot.bin
 
-.PHONY: all static test run run-llm run-gpt-char run-bench run-skipgram run-ngram run-seq2seq run-autoencoder run-mnist-conv run-mnist-resnet mnist-data plot-loss plot-autoencoder rebuild run-shakespeare examples clean FORCE
+.PHONY: all static test run run-llm run-gpt-char run-bench run-skipgram run-ngram run-seq2seq run-autoencoder run-mnist-conv run-resnet mnist-data plot-loss plot-autoencoder rebuild run-shakespeare examples clean FORCE
