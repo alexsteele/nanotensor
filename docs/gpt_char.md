@@ -7,7 +7,7 @@ The first version keeps the design intentionally small:
 
 - raw character vocabulary derived directly from the input text
 - learned token embeddings and learned positional embeddings
-- explicit single-head Q/K/V attention with a causal prefix mask
+- explicit Q/K/V attention with a causal prefix mask and configurable head count
 - residual connections plus a small feed-forward block
 - next-character cross-entropy training with Adam
 
@@ -15,6 +15,7 @@ At a high level:
 
 - input chars -> token embeddings + position embeddings
 - layernorm -> Q/K/V projections
+- split the model dimension across `heads` attention heads
 - causal attention over earlier positions in the current context window
 - residual add
 - layernorm -> feed-forward MLP -> residual add
@@ -30,9 +31,14 @@ make gpt-char
   --context=32 \
   --dim=32 \
   --hidden=64 \
+  --heads=4 \
   --lr=0.003 \
   --prompt="To be,"
 ```
+
+`dim` must be divisible by `heads`. A small starting point like `--dim=32
+--heads=4` keeps each head width manageable while still exercising the
+multi-head path.
 
 Useful outputs:
 

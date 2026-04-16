@@ -11,7 +11,7 @@
  *
  * Usage:
  *   ./gpt_char [--text=PATH] [--steps=N] [--context=N] [--dim=N]
- *              [--hidden=N] [--lr=FLOAT] [--temperature=FLOAT]
+ *              [--hidden=N] [--heads=N] [--lr=FLOAT] [--temperature=FLOAT]
  *              [--prompt=TEXT] [--log=PATH] [--report=PATH]
  */
 #include <math.h>
@@ -28,6 +28,7 @@ typedef struct {
     int context;
     int dim;
     int hidden;
+    int heads;
     float lr;
     float temperature;
     char prompt[256];
@@ -51,6 +52,7 @@ typedef struct {
     int context;
     int dim;
     int hidden;
+    int heads;
     Tensor *E;
     Tensor *P;
     Tensor *ln1_gamma;
@@ -73,8 +75,6 @@ typedef struct {
     int adam_step;
 } GPTCharModel;
 
-typedef TensorList TensorTemps;
-
 static void gpt_char_print_usage(const char *prog);
 static void gpt_char_parse_args(int argc, char **argv, GPTCharOptions *opt);
 static char *gpt_char_read_file(const char *path, size_t *out_size);
@@ -90,7 +90,7 @@ static void gpt_char_model_init(GPTCharModel *model,
                                 unsigned int *seed);
 static void gpt_char_model_free(GPTCharModel *model);
 static void gpt_char_print_architecture(const GPTCharModel *model, const GPTCharOptions *opt);
-static Tensor *gpt_char_forward_logits(TensorTemps *temps,
+static Tensor *gpt_char_forward_logits(TensorList *temps,
                                        GPTCharModel *model,
                                        const int *tokens,
                                        int seq_len);
@@ -159,14 +159,6 @@ static int id_for_char(const int char_to_id[256], char c, int fallback_id) {
     return id >= 0 ? id : fallback_id;
 }
 
-static void temps_push(TensorTemps *temps, Tensor *t) {
-    tensor_list_add(temps, t);
-}
-
-static void temps_free_all(TensorTemps *temps) {
-    tensor_list_free(temps);
-}
-
 static void gpt_char_print_usage(const char *prog) {
     printf("usage: %s [options]\n", prog);
     printf("  --text=PATH\n");
@@ -174,6 +166,7 @@ static void gpt_char_print_usage(const char *prog) {
     printf("  --context=N\n");
     printf("  --dim=N\n");
     printf("  --hidden=N\n");
+    printf("  --heads=N\n");
     printf("  --lr=FLOAT\n");
     printf("  --temperature=FLOAT\n");
     printf("  --prompt=TEXT\n");
@@ -187,6 +180,7 @@ static void gpt_char_parse_args(int argc, char **argv, GPTCharOptions *opt) {
     opt->context = 32;
     opt->dim = 32;
     opt->hidden = 64;
+    opt->heads = 1;
     opt->lr = 0.003f;
     opt->temperature = 0.9f;
     snprintf(opt->prompt, sizeof(opt->prompt), "%s", "To be,");
@@ -208,6 +202,8 @@ static void gpt_char_parse_args(int argc, char **argv, GPTCharOptions *opt) {
         } else if (sscanf(arg, "--dim=%d", &opt->dim) == 1) {
             continue;
         } else if (sscanf(arg, "--hidden=%d", &opt->hidden) == 1) {
+            continue;
+        } else if (sscanf(arg, "--heads=%d", &opt->heads) == 1) {
             continue;
         } else if (sscanf(arg, "--lr=%f", &opt->lr) == 1) {
             continue;
@@ -320,6 +316,7 @@ static void gpt_char_model_init(GPTCharModel *model,
     model->context = opt->context;
     model->dim = opt->dim;
     model->hidden = opt->hidden;
+    model->heads = opt->heads;
 
     model->E = tensor_create(vocab, opt->dim, 1);
     model->P = tensor_create(opt->context, opt->dim, 1);
@@ -388,13 +385,18 @@ static void gpt_char_model_free(GPTCharModel *model) {
 }
 
 static void gpt_char_print_architecture(const GPTCharModel *model, const GPTCharOptions *opt) {
-    printf("arch: vocab=%d context=%d dim=%d hidden=%d\n", model->vocab, opt->context, model->dim, model->hidden);
-    printf("arch: block=ln -> qkv self_attn -> resid\n");
+    printf("arch: vocab=%d context=%d dim=%d hidden=%d heads=%d\n",
+           model->vocab,
+           opt->context,
+           model->dim,
+           model->hidden,
+           model->heads);
+    printf("arch: block=ln -> qkv self_attn(%d heads) -> resid\n", model->heads);
     printf("arch: block=ln -> ff dim->hidden->dim -> resid\n");
-    printf("arch: head=single causal char lm\n");
+    printf("arch: head=causal char lm\n");
 }
 
-static Tensor *gpt_char_forward_logits(TensorTemps *temps,
+static Tensor *gpt_char_forward_logits(TensorList *temps,
                                        GPTCharModel *model,
                                        const int *tokens,
                                        int seq_len) {
@@ -406,7 +408,9 @@ static Tensor *gpt_char_forward_logits(TensorTemps *temps,
     Tensor *q = tensor_matmul(x_norm, model->W_q);
     Tensor *k = tensor_matmul(x_norm, model->W_k);
     Tensor *v = tensor_matmul(x_norm, model->W_v);
-    Tensor *ctx_cols = NULL;
+    Tensor *head_ctx = NULL;
+    Tensor *head_ctx_cols = NULL;
+    Tensor *attn_heads = NULL;
     Tensor *attn_ctx;
     Tensor *attn_proj;
     Tensor *resid1;
@@ -419,50 +423,74 @@ static Tensor *gpt_char_forward_logits(TensorTemps *temps,
     Tensor *resid2;
     Tensor *logits_lin;
     Tensor *logits;
-    const float scale = 1.0f / sqrtf((float)model->dim);
+    const int head_dim = model->dim / model->heads;
+    const float scale = 1.0f / sqrtf((float)head_dim);
 
-    temps_push(temps, x_onehot);
-    temps_push(temps, tok_embed);
-    temps_push(temps, pos_embed);
-    temps_push(temps, x);
-    temps_push(temps, x_norm);
-    temps_push(temps, q);
-    temps_push(temps, k);
-    temps_push(temps, v);
+    tensor_list_add(temps, x_onehot);
+    tensor_list_add(temps, tok_embed);
+    tensor_list_add(temps, pos_embed);
+    tensor_list_add(temps, x);
+    tensor_list_add(temps, x_norm);
+    tensor_list_add(temps, q);
+    tensor_list_add(temps, k);
+    tensor_list_add(temps, v);
 
-    /* Causal attention is built one query row at a time so each position only
-     * attends to keys/values from the prefix ending at that position.
+    /* Multi-head causal attention is built one head at a time and one query
+     * row at a time so each position only attends to the visible prefix.
      */
-    for (int t = 0; t < seq_len; t++) {
-        Tensor *q_t = tensor_slice(q, t, t + 1, 0, model->dim);
-        Tensor *k_prefix = tensor_slice(k, 0, t + 1, 0, model->dim);
-        Tensor *v_prefix = tensor_slice(v, 0, t + 1, 0, model->dim);
-        Tensor *k_prefix_t = tensor_transpose(k_prefix);
-        Tensor *scores = tensor_matmul(q_t, k_prefix_t);
-        Tensor *scaled = tensor_scalar_mul(scores, scale);
-        Tensor *weights = tensor_softmax(scaled);
-        Tensor *ctx_t = tensor_matmul(weights, v_prefix);
-        Tensor *ctx_col = tensor_transpose(ctx_t);
+    for (int h = 0; h < model->heads; h++) {
+        int col0 = h * head_dim;
+        int col1 = col0 + head_dim;
+        Tensor *q_head = tensor_slice(q, 0, seq_len, col0, col1);
+        Tensor *k_head = tensor_slice(k, 0, seq_len, col0, col1);
+        Tensor *v_head = tensor_slice(v, 0, seq_len, col0, col1);
 
-        temps_push(temps, q_t);
-        temps_push(temps, k_prefix);
-        temps_push(temps, v_prefix);
-        temps_push(temps, k_prefix_t);
-        temps_push(temps, scores);
-        temps_push(temps, scaled);
-        temps_push(temps, weights);
-        temps_push(temps, ctx_t);
-        if (!ctx_cols) {
-            ctx_cols = ctx_col;
-            temps_push(temps, ctx_cols);
+        tensor_list_add(temps, q_head);
+        tensor_list_add(temps, k_head);
+        tensor_list_add(temps, v_head);
+
+        head_ctx = NULL;
+        head_ctx_cols = NULL;
+        for (int t = 0; t < seq_len; t++) {
+            Tensor *q_t = tensor_slice(q_head, t, t + 1, 0, head_dim);
+            Tensor *k_prefix = tensor_slice(k_head, 0, t + 1, 0, head_dim);
+            Tensor *v_prefix = tensor_slice(v_head, 0, t + 1, 0, head_dim);
+            Tensor *k_prefix_t = tensor_transpose(k_prefix);
+            Tensor *scores = tensor_matmul(q_t, k_prefix_t);
+            Tensor *scaled = tensor_scalar_mul(scores, scale);
+            Tensor *weights = tensor_softmax(scaled);
+            Tensor *ctx_t = tensor_matmul(weights, v_prefix);
+            Tensor *ctx_col = tensor_transpose(ctx_t);
+
+            tensor_list_add(temps, q_t);
+            tensor_list_add(temps, k_prefix);
+            tensor_list_add(temps, v_prefix);
+            tensor_list_add(temps, k_prefix_t);
+            tensor_list_add(temps, scores);
+            tensor_list_add(temps, scaled);
+            tensor_list_add(temps, weights);
+            if (!head_ctx_cols) {
+                head_ctx_cols = ctx_col;
+                tensor_list_add(temps, head_ctx_cols);
+            } else {
+                tensor_list_add(temps, ctx_t);
+                head_ctx_cols = tensor_concat_cols(head_ctx_cols, ctx_col);
+                tensor_list_add(temps, ctx_col);
+                tensor_list_add(temps, head_ctx_cols);
+            }
+        }
+
+        head_ctx = tensor_transpose(head_ctx_cols);
+        tensor_list_add(temps, head_ctx);
+        if (!attn_heads) {
+            attn_heads = head_ctx;
         } else {
-            ctx_cols = tensor_concat_cols(ctx_cols, ctx_col);
-            temps_push(temps, ctx_col);
-            temps_push(temps, ctx_cols);
+            attn_heads = tensor_concat_cols(attn_heads, head_ctx);
+            tensor_list_add(temps, attn_heads);
         }
     }
 
-    attn_ctx = tensor_transpose(ctx_cols);
+    attn_ctx = attn_heads;
     attn_proj = tensor_matmul(attn_ctx, model->W_o);
     resid1 = tensor_add(x, attn_proj);
     resid1_norm = tensor_layernorm(resid1, model->ln2_gamma, model->ln2_beta, 1e-5f);
@@ -475,18 +503,17 @@ static Tensor *gpt_char_forward_logits(TensorTemps *temps,
     logits_lin = tensor_matmul(resid2, model->W_vocab);
     logits = tensor_add_bias(logits_lin, model->b_vocab);
 
-    temps_push(temps, attn_ctx);
-    temps_push(temps, attn_proj);
-    temps_push(temps, resid1);
-    temps_push(temps, resid1_norm);
-    temps_push(temps, ff1_lin);
-    temps_push(temps, ff1_bias);
-    temps_push(temps, ff1);
-    temps_push(temps, ff2_lin);
-    temps_push(temps, ff2_bias);
-    temps_push(temps, resid2);
-    temps_push(temps, logits_lin);
-    temps_push(temps, logits);
+    tensor_list_add(temps, attn_proj);
+    tensor_list_add(temps, resid1);
+    tensor_list_add(temps, resid1_norm);
+    tensor_list_add(temps, ff1_lin);
+    tensor_list_add(temps, ff1_bias);
+    tensor_list_add(temps, ff1);
+    tensor_list_add(temps, ff2_lin);
+    tensor_list_add(temps, ff2_bias);
+    tensor_list_add(temps, resid2);
+    tensor_list_add(temps, logits_lin);
+    tensor_list_add(temps, logits);
     return logits;
 }
 
@@ -495,16 +522,16 @@ static float gpt_char_eval_window(GPTCharModel *model,
                                   int start,
                                   int seq_len,
                                   float *out_acc) {
-    TensorTemps temps = {0};
+    TensorList temps = {0};
     Tensor *logits = gpt_char_forward_logits(&temps, model, tokens + start, seq_len);
     Tensor *targets = tensor_one_hot(tokens + start + 1, seq_len, model->vocab);
     Tensor *probs = tensor_softmax(logits);
     Tensor *loss = tensor_cross_entropy(probs, targets);
     int correct = 0;
 
-    temps_push(&temps, targets);
-    temps_push(&temps, probs);
-    temps_push(&temps, loss);
+    tensor_list_add(&temps, targets);
+    tensor_list_add(&temps, probs);
+    tensor_list_add(&temps, loss);
 
     for (int i = 0; i < seq_len; i++) {
         if (tensor_argmax_row(logits, i) == tokens[start + 1 + i]) {
@@ -517,7 +544,7 @@ static float gpt_char_eval_window(GPTCharModel *model,
 
     {
         float loss_value = loss->data[0];
-        temps_free_all(&temps);
+        tensor_list_free(&temps);
         return loss_value;
     }
 }
@@ -581,19 +608,19 @@ static void gpt_char_generate(FILE *out,
     for (int step = 0; step < gen_len; step++) {
         int window = gen_len_tokens < opt->context ? gen_len_tokens : opt->context;
         int start = gen_len_tokens - window;
-        TensorTemps temps = {0};
+        TensorList temps = {0};
         Tensor *logits = gpt_char_forward_logits(&temps, model, gen + start, window);
         Tensor *last = tensor_slice(logits, window - 1, window, 0, model->vocab);
         Tensor *scaled = tensor_scalar_mul(last, 1.0f / (opt->temperature > 1e-6f ? opt->temperature : 1e-6f));
         Tensor *probs = tensor_softmax(scaled);
         int next = sample_from_probs(probs->data, model->vocab, seed);
 
-        temps_push(&temps, last);
-        temps_push(&temps, scaled);
-        temps_push(&temps, probs);
+        tensor_list_add(&temps, last);
+        tensor_list_add(&temps, scaled);
+        tensor_list_add(&temps, probs);
         gen[gen_len_tokens++] = next;
         fputc(gpt_char_output_char(id_to_char[next]), out);
-        temps_free_all(&temps);
+        tensor_list_free(&temps);
     }
     fputc('\n', out);
     free(gen);
@@ -614,7 +641,14 @@ static void gpt_char_write_report(const GPTCharOptions *opt,
     }
 
     fprintf(out, "gpt_char report\n");
-    fprintf(out, "context=%d dim=%d hidden=%d steps=%d lr=%.4f\n\n", opt->context, opt->dim, opt->hidden, opt->steps, opt->lr);
+    fprintf(out,
+            "context=%d dim=%d hidden=%d heads=%d steps=%d lr=%.4f\n\n",
+            opt->context,
+            opt->dim,
+            opt->hidden,
+            opt->heads,
+            opt->steps,
+            opt->lr);
     for (size_t i = 0; i < sizeof(prompts) / sizeof(prompts[0]); i++) {
         fprintf(out, "prompt: ");
         gpt_char_generate(out, model, opt, char_to_id, id_to_char, fallback_tokens, prompts[i], 96, seed);
@@ -651,7 +685,13 @@ int main(int argc, char **argv) {
     if (opt.context <= 1) opt.context = 32;
     if (opt.dim <= 0) opt.dim = 32;
     if (opt.hidden <= 0) opt.hidden = 64;
+    if (opt.heads <= 0) opt.heads = 1;
     if (opt.lr <= 0.0f) opt.lr = 0.003f;
+    if (opt.dim % opt.heads != 0) {
+        fprintf(stderr, "dim=%d must be divisible by heads=%d\n", opt.dim, opt.heads);
+        free(text);
+        return 1;
+    }
     if (text_len < (size_t)(opt.context + 2)) {
         fprintf(stderr, "text corpus is too small for context=%d\n", opt.context);
         free(text);
@@ -686,7 +726,12 @@ int main(int argc, char **argv) {
     gpt_char_model_init(&model, vocab, &opt, &seed);
     gpt_char_print_architecture(&model, &opt);
     printf("opt: text=%s\n", opt.text_path);
-    printf("opt: steps=%d context=%d lr=%.4f prompt=%s\n", opt.steps, opt.context, opt.lr, opt.prompt);
+    printf("opt: steps=%d context=%d heads=%d lr=%.4f prompt=%s\n",
+           opt.steps,
+           opt.context,
+           opt.heads,
+           opt.lr,
+           opt.prompt);
     printf("opt: train=%d eval=%d vocab=%d log=%s\n", train_len, eval_len, vocab, opt.log_path);
 
     logf = fopen(opt.log_path, "w");
@@ -697,16 +742,16 @@ int main(int argc, char **argv) {
 
     for (int step = 1; step <= opt.steps; step++) {
         int start = (int)(rand_uniform(&seed) * (float)(train_len - opt.context - 1));
-        TensorTemps temps = {0};
+        TensorList temps = {0};
         Tensor *logits = gpt_char_forward_logits(&temps, &model, train_tokens + start, opt.context);
         Tensor *targets = tensor_one_hot(train_tokens + start + 1, opt.context, vocab);
         Tensor *probs = tensor_softmax(logits);
         Tensor *loss = tensor_cross_entropy(probs, targets);
         int correct = 0;
 
-        temps_push(&temps, targets);
-        temps_push(&temps, probs);
-        temps_push(&temps, loss);
+        tensor_list_add(&temps, targets);
+        tensor_list_add(&temps, probs);
+        tensor_list_add(&temps, loss);
 
         for (int i = 0; i < opt.context; i++) {
             if (tensor_argmax_row(logits, i) == train_tokens[start + 1 + i]) {
@@ -740,7 +785,7 @@ int main(int argc, char **argv) {
             fflush(logf);
         }
 
-        temps_free_all(&temps);
+        tensor_list_free(&temps);
     }
 
     printf("\n--- generation ---\n");
