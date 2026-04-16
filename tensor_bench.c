@@ -26,6 +26,7 @@ typedef enum {
 
 typedef struct {
     const char *name;
+    const char *tag;
     BenchKind kind;
     int rows;
     int inner;
@@ -52,9 +53,17 @@ static void fill_pattern(Tensor *t, float scale) {
 
 static const char *shape_string(const BenchCase *bc, char *buf, size_t buf_size) {
     if (bc->kind == BENCH_MATMUL) {
-        snprintf(buf, buf_size, "[%d,%d] x [%d,%d]", bc->rows, bc->inner, bc->inner, bc->cols);
+        if (bc->tag && bc->tag[0] != '\0') {
+            snprintf(buf, buf_size, "%s [%d,%d] x [%d,%d]", bc->tag, bc->rows, bc->inner, bc->inner, bc->cols);
+        } else {
+            snprintf(buf, buf_size, "[%d,%d] x [%d,%d]", bc->rows, bc->inner, bc->inner, bc->cols);
+        }
     } else {
-        snprintf(buf, buf_size, "[%d,%d]", bc->rows, bc->cols);
+        if (bc->tag && bc->tag[0] != '\0') {
+            snprintf(buf, buf_size, "%s [%d,%d]", bc->tag, bc->rows, bc->cols);
+        } else {
+            snprintf(buf, buf_size, "[%d,%d]", bc->rows, bc->cols);
+        }
     }
     return buf;
 }
@@ -199,15 +208,26 @@ static int default_iters(const BenchCase *bc) {
 
 int main(int argc, char **argv) {
     const BenchCase cases[] = {
-        {"matmul", BENCH_MATMUL, 64, 256, 256, 2 * 64 * 256 * 256},
-        {"matmul", BENCH_MATMUL, 256, 576, 16, 2 * 256 * 576 * 16},
-        {"matmul", BENCH_MATMUL, 512, 32, 10, 2 * 512 * 32 * 10},
-        {"relu", BENCH_RELU, 256, 0, 256, 256 * 256},
-        {"relu", BENCH_RELU, 512, 0, 64, 512 * 64},
-        {"layernorm", BENCH_LAYERNORM, 256, 0, 32, 5 * 256 * 32},
-        {"layernorm", BENCH_LAYERNORM, 512, 0, 64, 5 * 512 * 64},
-        {"softmax", BENCH_SOFTMAX, 256, 0, 10, 4 * 256 * 10},
-        {"softmax", BENCH_SOFTMAX, 32, 0, 256, 4 * 32 * 256},
+        {"matmul", "", BENCH_MATMUL, 64, 256, 256, 2 * 64 * 256 * 256},
+        {"matmul", "", BENCH_MATMUL, 256, 576, 16, 2 * 256 * 576 * 16},
+        {"matmul", "", BENCH_MATMUL, 512, 32, 10, 2 * 512 * 32 * 10},
+        {"matmul", "gpt-qkv", BENCH_MATMUL, 32, 32, 32, 2 * 32 * 32 * 32},
+        {"matmul", "gpt-ff1", BENCH_MATMUL, 32, 32, 64, 2 * 32 * 32 * 64},
+        {"matmul", "gpt-ff2", BENCH_MATMUL, 32, 64, 32, 2 * 32 * 64 * 32},
+        {"matmul", "conv-stem", BENCH_MATMUL, 256 * 576, 25, 32, 2 * (256 * 576) * 25 * 32},
+        {"matmul", "res-ff1", BENCH_MATMUL, 256 * 576, 32, 64, 2 * (256 * 576) * 32 * 64},
+        {"matmul", "res-ff2", BENCH_MATMUL, 256 * 576, 64, 32, 2 * (256 * 576) * 64 * 32},
+        {"matmul", "ae-enc1", BENCH_MATMUL, 32, 784, 256, 2 * 32 * 784 * 256},
+        {"matmul", "ae-latent", BENCH_MATMUL, 32, 256, 64, 2 * 32 * 256 * 64},
+        {"matmul", "ae-dec1", BENCH_MATMUL, 32, 64, 256, 2 * 32 * 64 * 256},
+        {"matmul", "ae-out", BENCH_MATMUL, 32, 256, 784, 2 * 32 * 256 * 784},
+        {"relu", "", BENCH_RELU, 256, 0, 256, 256 * 256},
+        {"relu", "", BENCH_RELU, 512, 0, 64, 512 * 64},
+        {"layernorm", "", BENCH_LAYERNORM, 256, 0, 32, 5 * 256 * 32},
+        {"layernorm", "", BENCH_LAYERNORM, 512, 0, 64, 5 * 512 * 64},
+        {"layernorm", "res-ln", BENCH_LAYERNORM, 256 * 576, 0, 32, 5 * (256 * 576) * 32},
+        {"softmax", "", BENCH_SOFTMAX, 256, 0, 10, 4 * 256 * 10},
+        {"softmax", "", BENCH_SOFTMAX, 32, 0, 256, 4 * 32 * 256},
     };
     int forced_iters = 0;
     int warmup_iters = 5;
@@ -235,8 +255,8 @@ int main(int argc, char **argv) {
     printf("nanotensor microbench\n");
     printf("matmul backend: %s\n", tensor_matmul_backend_name());
     printf("warmup iters: %d\n", warmup_iters);
-    printf("%-10s %-22s %8s %14s %12s\n", "op", "shape", "iters", "ns/op", "GFLOP/s");
-    printf("%-10s %-22s %8s %14s %12s\n", "----------", "----------------------", "--------", "--------------", "------------");
+    printf("%-10s %-30s %8s %14s %12s\n", "op", "shape", "iters", "ns/op", "GFLOP/s");
+    printf("%-10s %-30s %8s %14s %12s\n", "----------", "------------------------------", "--------", "--------------", "------------");
 
     for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
         const BenchCase *bc = &cases[i];
@@ -247,7 +267,7 @@ int main(int argc, char **argv) {
                             ? ((double)bc->flops_per_call * (double)iters) / elapsed / 1e9
                             : 0.0;
 
-        printf("%-10s %-22s %8d %14.0f %12.2f\n",
+        printf("%-10s %-30s %8d %14.0f %12.2f\n",
                bc->name,
                shape_string(bc, shape_buf, sizeof(shape_buf)),
                iters,

@@ -119,8 +119,9 @@ in matmul-heavy training loops and the BLAS backend is much faster.
   [docs/ngram.md](/Users/alex/Code/nanotensor/docs/ngram.md).
 - `seq2seq.c`: synthetic digit-sequence reversal demo with fixed-eval
   reporting. See [docs/seq2seq.md](/Users/alex/Code/nanotensor/docs/seq2seq.md).
-- `tensor_bench.c`: microbenchmark table for core ops like matmul, relu,
-  layernorm, and softmax. Run `make run-bench`.
+- `tensor_bench.c`: microbenchmark table for core ops plus a few model-shaped
+  rows drawn from GPT-char, the MNIST patch demos, and the autoencoder. Run
+  `make run-bench`.
 - `convnet.c`: minimal MNIST conv-like classifier built on `im2col` and shared
   MNIST helpers. See [docs/convnet.md](/Users/alex/Code/nanotensor/docs/convnet.md).
 - `resnet.c`: MNIST residual patch-network demo with a patch stem, two
