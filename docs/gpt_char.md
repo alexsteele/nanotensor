@@ -1,24 +1,23 @@
 # GPT Char
 
 `gpt_char.c` is a minimal GPT-like character language model demo built around a
-single causal self-attention block.
+small stack of causal self-attention blocks.
 
-The first version keeps the design intentionally small:
+The demo keeps the design intentionally small:
 
 - raw character vocabulary derived directly from the input text
 - learned token embeddings and learned positional embeddings
-- explicit Q/K/V attention with a causal prefix mask and configurable head count
+- explicit Q/K/V attention with a causal prefix mask
+- configurable attention head count and transformer block depth
 - residual connections plus a small feed-forward block
 - next-character cross-entropy training with Adam
 
 At a high level:
 
 - input chars -> token embeddings + position embeddings
-- layernorm -> Q/K/V projections
-- split the model dimension across `heads` attention heads
-- causal attention over earlier positions in the current context window
-- residual add
-- layernorm -> feed-forward MLP -> residual add
+- repeat `blocks` times: layernorm -> Q/K/V projections -> split across `heads`
+  attention heads -> causal attention over the visible context prefix ->
+  residual add -> layernorm -> feed-forward MLP -> residual add
 - vocab logits at every position
 
 Build and run:
@@ -32,13 +31,14 @@ make gpt-char
   --dim=32 \
   --hidden=64 \
   --heads=4 \
+  --blocks=2 \
   --lr=0.003 \
   --prompt="To be,"
 ```
 
 `dim` must be divisible by `heads`. A small starting point like `--dim=32
---heads=4` keeps each head width manageable while still exercising the
-multi-head path.
+--heads=4 --blocks=2` keeps each head width manageable while still exercising
+both the multi-head path and a deeper residual stack.
 
 Useful outputs:
 

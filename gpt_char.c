@@ -4,14 +4,15 @@
  * gpt_char.c
  *
  * Minimal GPT-like character language model demo using nanotensor.
- * - Trains a single-block causal self-attention model on raw text
+ * - Trains a small stacked causal self-attention model on raw text
  * - Uses explicit Q/K/V projections with autoregressive next-char loss
  * - Adds residual connections, layernorm, and a small feed-forward block
+ * - Supports multiple transformer-style blocks and configurable head count
  * - Generates text from fixed prompts and can save a report/log artifact
  *
  * Usage:
  *   ./gpt_char [--text=PATH] [--steps=N] [--context=N] [--dim=N]
- *              [--hidden=N] [--heads=N] [--lr=FLOAT] [--temperature=FLOAT]
+ *              [--hidden=N] [--heads=N] [--blocks=N] [--lr=FLOAT] [--temperature=FLOAT]
  *              [--prompt=TEXT] [--log=PATH] [--report=PATH]
  */
 #include <math.h>
@@ -20,8 +21,6 @@
 #include <string.h>
 
 #define MAX_VOCAB 256
-#define GPT_PARAM_COUNT 16
-
 typedef struct {
     char text_path[1024];
     int steps;
@@ -29,6 +28,7 @@ typedef struct {
     int dim;
     int hidden;
     int heads;
+    int blocks;
     float lr;
     float temperature;
     char prompt[256];
@@ -39,22 +39,16 @@ typedef struct {
 /* Architecture:
  * input chars [seq]
  * -> token embeddings + learned positional embeddings [seq, dim]
- * -> layernorm
- * -> causal self-attention via Q/K/V projections [seq, dim]
- * -> residual add
- * -> layernorm
- * -> feed-forward MLP dim -> hidden -> dim
- * -> residual add
+ * -> repeat N blocks:
+ *    layernorm
+ *    causal self-attention via Q/K/V projections [seq, dim]
+ *    residual add
+ *    layernorm
+ *    feed-forward MLP dim -> hidden -> dim
+ *    residual add
  * -> vocab logits per position [seq, vocab]
  */
 typedef struct {
-    int vocab;
-    int context;
-    int dim;
-    int hidden;
-    int heads;
-    Tensor *E;
-    Tensor *P;
     Tensor *ln1_gamma;
     Tensor *ln1_beta;
     Tensor *W_q;
@@ -67,11 +61,23 @@ typedef struct {
     Tensor *b1;
     Tensor *W2;
     Tensor *b2;
+} GPTBlock;
+
+typedef struct {
+    int vocab;
+    int context;
+    int dim;
+    int hidden;
+    int heads;
+    int n_blocks;
+    Tensor *E;
+    Tensor *P;
+    GPTBlock *blocks;
     Tensor *W_vocab;
     Tensor *b_vocab;
-    Tensor *params[GPT_PARAM_COUNT];
-    Tensor *adam_m1[GPT_PARAM_COUNT];
-    Tensor *adam_m2[GPT_PARAM_COUNT];
+    TensorList params;
+    TensorList adam_m1;
+    TensorList adam_m2;
     int adam_step;
 } GPTCharModel;
 
@@ -90,6 +96,11 @@ static void gpt_char_model_init(GPTCharModel *model,
                                 unsigned int *seed);
 static void gpt_char_model_free(GPTCharModel *model);
 static void gpt_char_print_architecture(const GPTCharModel *model, const GPTCharOptions *opt);
+static Tensor *gpt_char_block_forward(TensorList *temps,
+                                      GPTCharModel *model,
+                                      GPTBlock *block,
+                                      Tensor *x,
+                                      int seq_len);
 static Tensor *gpt_char_forward_logits(TensorList *temps,
                                        GPTCharModel *model,
                                        const int *tokens,
@@ -167,6 +178,7 @@ static void gpt_char_print_usage(const char *prog) {
     printf("  --dim=N\n");
     printf("  --hidden=N\n");
     printf("  --heads=N\n");
+    printf("  --blocks=N\n");
     printf("  --lr=FLOAT\n");
     printf("  --temperature=FLOAT\n");
     printf("  --prompt=TEXT\n");
@@ -181,6 +193,7 @@ static void gpt_char_parse_args(int argc, char **argv, GPTCharOptions *opt) {
     opt->dim = 32;
     opt->hidden = 64;
     opt->heads = 1;
+    opt->blocks = 1;
     opt->lr = 0.003f;
     opt->temperature = 0.9f;
     snprintf(opt->prompt, sizeof(opt->prompt), "%s", "To be,");
@@ -204,6 +217,8 @@ static void gpt_char_parse_args(int argc, char **argv, GPTCharOptions *opt) {
         } else if (sscanf(arg, "--hidden=%d", &opt->hidden) == 1) {
             continue;
         } else if (sscanf(arg, "--heads=%d", &opt->heads) == 1) {
+            continue;
+        } else if (sscanf(arg, "--blocks=%d", &opt->blocks) == 1) {
             continue;
         } else if (sscanf(arg, "--lr=%f", &opt->lr) == 1) {
             continue;
@@ -317,97 +332,113 @@ static void gpt_char_model_init(GPTCharModel *model,
     model->dim = opt->dim;
     model->hidden = opt->hidden;
     model->heads = opt->heads;
+    model->n_blocks = opt->blocks;
 
     model->E = tensor_create(vocab, opt->dim, 1);
     model->P = tensor_create(opt->context, opt->dim, 1);
-    model->ln1_gamma = tensor_create(1, opt->dim, 1);
-    model->ln1_beta = tensor_create(1, opt->dim, 1);
-    model->W_q = tensor_create(opt->dim, opt->dim, 1);
-    model->W_k = tensor_create(opt->dim, opt->dim, 1);
-    model->W_v = tensor_create(opt->dim, opt->dim, 1);
-    model->W_o = tensor_create(opt->dim, opt->dim, 1);
-    model->ln2_gamma = tensor_create(1, opt->dim, 1);
-    model->ln2_beta = tensor_create(1, opt->dim, 1);
-    model->W1 = tensor_create(opt->dim, opt->hidden, 1);
-    model->b1 = tensor_create(1, opt->hidden, 1);
-    model->W2 = tensor_create(opt->hidden, opt->dim, 1);
-    model->b2 = tensor_create(1, opt->dim, 1);
+    model->blocks = (GPTBlock *)calloc((size_t)model->n_blocks, sizeof(GPTBlock));
     model->W_vocab = tensor_create(opt->dim, vocab, 1);
     model->b_vocab = tensor_create(1, vocab, 1);
+    tensor_list_init(&model->params);
+    tensor_list_init(&model->adam_m1);
+    tensor_list_init(&model->adam_m2);
+    if (!model->E || !model->P || !model->blocks || !model->W_vocab || !model->b_vocab) {
+        die("gpt_char_model_init: allocation failed");
+    }
 
     tensor_fill_randn(model->E, 0.0f, 0.05f, seed);
     tensor_fill_randn(model->P, 0.0f, 0.05f, seed);
-    tensor_fill(model->ln1_gamma, 1.0f);
-    tensor_fill(model->ln1_beta, 0.0f);
-    tensor_fill_randn(model->W_q, 0.0f, 0.05f, seed);
-    tensor_fill_randn(model->W_k, 0.0f, 0.05f, seed);
-    tensor_fill_randn(model->W_v, 0.0f, 0.05f, seed);
-    tensor_fill_randn(model->W_o, 0.0f, 0.05f, seed);
-    tensor_fill(model->ln2_gamma, 1.0f);
-    tensor_fill(model->ln2_beta, 0.0f);
-    tensor_fill_randn(model->W1, 0.0f, 0.05f, seed);
-    tensor_fill(model->b1, 0.0f);
-    tensor_fill_randn(model->W2, 0.0f, 0.05f, seed);
-    tensor_fill(model->b2, 0.0f);
+    for (int i = 0; i < model->n_blocks; i++) {
+        GPTBlock *block = &model->blocks[i];
+        block->ln1_gamma = tensor_create(1, opt->dim, 1);
+        block->ln1_beta = tensor_create(1, opt->dim, 1);
+        block->W_q = tensor_create(opt->dim, opt->dim, 1);
+        block->W_k = tensor_create(opt->dim, opt->dim, 1);
+        block->W_v = tensor_create(opt->dim, opt->dim, 1);
+        block->W_o = tensor_create(opt->dim, opt->dim, 1);
+        block->ln2_gamma = tensor_create(1, opt->dim, 1);
+        block->ln2_beta = tensor_create(1, opt->dim, 1);
+        block->W1 = tensor_create(opt->dim, opt->hidden, 1);
+        block->b1 = tensor_create(1, opt->hidden, 1);
+        block->W2 = tensor_create(opt->hidden, opt->dim, 1);
+        block->b2 = tensor_create(1, opt->dim, 1);
+        if (!block->ln1_gamma || !block->ln1_beta || !block->W_q || !block->W_k || !block->W_v || !block->W_o ||
+            !block->ln2_gamma || !block->ln2_beta || !block->W1 || !block->b1 || !block->W2 || !block->b2) {
+            die("gpt_char_model_init: block allocation failed");
+        }
+        tensor_fill(block->ln1_gamma, 1.0f);
+        tensor_fill(block->ln1_beta, 0.0f);
+        tensor_fill_randn(block->W_q, 0.0f, 0.05f, seed);
+        tensor_fill_randn(block->W_k, 0.0f, 0.05f, seed);
+        tensor_fill_randn(block->W_v, 0.0f, 0.05f, seed);
+        tensor_fill_randn(block->W_o, 0.0f, 0.05f, seed);
+        tensor_fill(block->ln2_gamma, 1.0f);
+        tensor_fill(block->ln2_beta, 0.0f);
+        tensor_fill_randn(block->W1, 0.0f, 0.05f, seed);
+        tensor_fill(block->b1, 0.0f);
+        tensor_fill_randn(block->W2, 0.0f, 0.05f, seed);
+        tensor_fill(block->b2, 0.0f);
+    }
     tensor_fill_randn(model->W_vocab, 0.0f, 0.05f, seed);
     tensor_fill(model->b_vocab, 0.0f);
 
-    model->params[0] = model->E;
-    model->params[1] = model->P;
-    model->params[2] = model->ln1_gamma;
-    model->params[3] = model->ln1_beta;
-    model->params[4] = model->W_q;
-    model->params[5] = model->W_k;
-    model->params[6] = model->W_v;
-    model->params[7] = model->W_o;
-    model->params[8] = model->ln2_gamma;
-    model->params[9] = model->ln2_beta;
-    model->params[10] = model->W1;
-    model->params[11] = model->b1;
-    model->params[12] = model->W2;
-    model->params[13] = model->b2;
-    model->params[14] = model->W_vocab;
-    model->params[15] = model->b_vocab;
+    tensor_list_add(&model->params, model->E);
+    tensor_list_add(&model->params, model->P);
+    for (int i = 0; i < model->n_blocks; i++) {
+        GPTBlock *block = &model->blocks[i];
+        tensor_list_add(&model->params, block->ln1_gamma);
+        tensor_list_add(&model->params, block->ln1_beta);
+        tensor_list_add(&model->params, block->W_q);
+        tensor_list_add(&model->params, block->W_k);
+        tensor_list_add(&model->params, block->W_v);
+        tensor_list_add(&model->params, block->W_o);
+        tensor_list_add(&model->params, block->ln2_gamma);
+        tensor_list_add(&model->params, block->ln2_beta);
+        tensor_list_add(&model->params, block->W1);
+        tensor_list_add(&model->params, block->b1);
+        tensor_list_add(&model->params, block->W2);
+        tensor_list_add(&model->params, block->b2);
+    }
+    tensor_list_add(&model->params, model->W_vocab);
+    tensor_list_add(&model->params, model->b_vocab);
 
-    for (int i = 0; i < GPT_PARAM_COUNT; i++) {
-        model->adam_m1[i] = tensor_create(model->params[i]->rows, model->params[i]->cols, 0);
-        model->adam_m2[i] = tensor_create(model->params[i]->rows, model->params[i]->cols, 0);
+    for (int i = 0; i < model->params.len; i++) {
+        Tensor *param = model->params.items[i];
+        tensor_list_add(&model->adam_m1, tensor_create(param->rows, param->cols, 0));
+        tensor_list_add(&model->adam_m2, tensor_create(param->rows, param->cols, 0));
     }
 }
 
 static void gpt_char_model_free(GPTCharModel *model) {
-    for (int i = 0; i < GPT_PARAM_COUNT; i++) {
-        tensor_free(model->params[i]);
-        tensor_free(model->adam_m1[i]);
-        tensor_free(model->adam_m2[i]);
-    }
+    tensor_list_free(&model->params);
+    tensor_list_free(&model->adam_m1);
+    tensor_list_free(&model->adam_m2);
+    free(model->blocks);
     memset(model, 0, sizeof(*model));
 }
 
 static void gpt_char_print_architecture(const GPTCharModel *model, const GPTCharOptions *opt) {
-    printf("arch: vocab=%d context=%d dim=%d hidden=%d heads=%d\n",
+    printf("arch: vocab=%d context=%d dim=%d hidden=%d heads=%d blocks=%d\n",
            model->vocab,
            opt->context,
            model->dim,
            model->hidden,
+           model->heads,
+           model->n_blocks);
+    printf("arch: block=ln -> qkv self_attn(%d heads) -> resid -> ln -> ff dim->hidden->dim -> resid\n",
            model->heads);
-    printf("arch: block=ln -> qkv self_attn(%d heads) -> resid\n", model->heads);
-    printf("arch: block=ln -> ff dim->hidden->dim -> resid\n");
     printf("arch: head=causal char lm\n");
 }
 
-static Tensor *gpt_char_forward_logits(TensorList *temps,
-                                       GPTCharModel *model,
-                                       const int *tokens,
-                                       int seq_len) {
-    Tensor *x_onehot = tensor_one_hot(tokens, seq_len, model->vocab);
-    Tensor *tok_embed = tensor_matmul(x_onehot, model->E);
-    Tensor *pos_embed = tensor_slice(model->P, 0, seq_len, 0, model->dim);
-    Tensor *x = tensor_add(tok_embed, pos_embed);
-    Tensor *x_norm = tensor_layernorm(x, model->ln1_gamma, model->ln1_beta, 1e-5f);
-    Tensor *q = tensor_matmul(x_norm, model->W_q);
-    Tensor *k = tensor_matmul(x_norm, model->W_k);
-    Tensor *v = tensor_matmul(x_norm, model->W_v);
+static Tensor *gpt_char_block_forward(TensorList *temps,
+                                      GPTCharModel *model,
+                                      GPTBlock *block,
+                                      Tensor *x,
+                                      int seq_len) {
+    Tensor *x_norm;
+    Tensor *q;
+    Tensor *k;
+    Tensor *v;
     Tensor *head_ctx = NULL;
     Tensor *head_ctx_cols = NULL;
     Tensor *attn_heads = NULL;
@@ -421,19 +452,12 @@ static Tensor *gpt_char_forward_logits(TensorList *temps,
     Tensor *ff2_lin;
     Tensor *ff2_bias;
     Tensor *resid2;
-    Tensor *logits_lin;
-    Tensor *logits;
     const int head_dim = model->dim / model->heads;
     const float scale = 1.0f / sqrtf((float)head_dim);
-
-    tensor_list_add(temps, x_onehot);
-    tensor_list_add(temps, tok_embed);
-    tensor_list_add(temps, pos_embed);
-    tensor_list_add(temps, x);
-    tensor_list_add(temps, x_norm);
-    tensor_list_add(temps, q);
-    tensor_list_add(temps, k);
-    tensor_list_add(temps, v);
+    x_norm = tensor_list_add(temps, tensor_layernorm(x, block->ln1_gamma, block->ln1_beta, 1e-5f));
+    q = tensor_list_add(temps, tensor_matmul(x_norm, block->W_q));
+    k = tensor_list_add(temps, tensor_matmul(x_norm, block->W_k));
+    v = tensor_list_add(temps, tensor_matmul(x_norm, block->W_v));
 
     /* Multi-head causal attention is built one head at a time and one query
      * row at a time so each position only attends to the visible prefix.
@@ -491,29 +515,37 @@ static Tensor *gpt_char_forward_logits(TensorList *temps,
     }
 
     attn_ctx = attn_heads;
-    attn_proj = tensor_matmul(attn_ctx, model->W_o);
-    resid1 = tensor_add(x, attn_proj);
-    resid1_norm = tensor_layernorm(resid1, model->ln2_gamma, model->ln2_beta, 1e-5f);
-    ff1_lin = tensor_matmul(resid1_norm, model->W1);
-    ff1_bias = tensor_add_bias(ff1_lin, model->b1);
-    ff1 = tensor_relu(ff1_bias);
-    ff2_lin = tensor_matmul(ff1, model->W2);
-    ff2_bias = tensor_add_bias(ff2_lin, model->b2);
-    resid2 = tensor_add(resid1, ff2_bias);
-    logits_lin = tensor_matmul(resid2, model->W_vocab);
-    logits = tensor_add_bias(logits_lin, model->b_vocab);
+    attn_proj = tensor_list_add(temps, tensor_matmul(attn_ctx, block->W_o));
+    resid1 = tensor_list_add(temps, tensor_add(x, attn_proj));
+    resid1_norm = tensor_list_add(temps, tensor_layernorm(resid1, block->ln2_gamma, block->ln2_beta, 1e-5f));
+    ff1_lin = tensor_list_add(temps, tensor_matmul(resid1_norm, block->W1));
+    ff1_bias = tensor_list_add(temps, tensor_add_bias(ff1_lin, block->b1));
+    ff1 = tensor_list_add(temps, tensor_relu(ff1_bias));
+    ff2_lin = tensor_list_add(temps, tensor_matmul(ff1, block->W2));
+    ff2_bias = tensor_list_add(temps, tensor_add_bias(ff2_lin, block->b2));
+    resid2 = tensor_list_add(temps, tensor_add(resid1, ff2_bias));
 
-    tensor_list_add(temps, attn_proj);
-    tensor_list_add(temps, resid1);
-    tensor_list_add(temps, resid1_norm);
-    tensor_list_add(temps, ff1_lin);
-    tensor_list_add(temps, ff1_bias);
-    tensor_list_add(temps, ff1);
-    tensor_list_add(temps, ff2_lin);
-    tensor_list_add(temps, ff2_bias);
-    tensor_list_add(temps, resid2);
-    tensor_list_add(temps, logits_lin);
-    tensor_list_add(temps, logits);
+    return resid2;
+}
+
+static Tensor *gpt_char_forward_logits(TensorList *temps,
+                                       GPTCharModel *model,
+                                       const int *tokens,
+                                       int seq_len) {
+    Tensor *x_onehot = tensor_list_add(temps, tensor_one_hot(tokens, seq_len, model->vocab));
+    Tensor *tok_embed = tensor_list_add(temps, tensor_matmul(x_onehot, model->E));
+    Tensor *pos_embed = tensor_list_add(temps, tensor_slice(model->P, 0, seq_len, 0, model->dim));
+    Tensor *x = tensor_list_add(temps, tensor_add(tok_embed, pos_embed));
+    Tensor *logits_lin;
+    Tensor *logits;
+
+    for (int i = 0; i < model->n_blocks; i++) {
+        x = gpt_char_block_forward(temps, model, &model->blocks[i], x, seq_len);
+    }
+
+    logits_lin = tensor_list_add(temps, tensor_matmul(x, model->W_vocab));
+    logits = tensor_list_add(temps, tensor_add_bias(logits_lin, model->b_vocab));
+
     return logits;
 }
 
@@ -642,11 +674,12 @@ static void gpt_char_write_report(const GPTCharOptions *opt,
 
     fprintf(out, "gpt_char report\n");
     fprintf(out,
-            "context=%d dim=%d hidden=%d heads=%d steps=%d lr=%.4f\n\n",
+            "context=%d dim=%d hidden=%d heads=%d blocks=%d steps=%d lr=%.4f\n\n",
             opt->context,
             opt->dim,
             opt->hidden,
             opt->heads,
+            opt->blocks,
             opt->steps,
             opt->lr);
     for (size_t i = 0; i < sizeof(prompts) / sizeof(prompts[0]); i++) {
@@ -686,6 +719,7 @@ int main(int argc, char **argv) {
     if (opt.dim <= 0) opt.dim = 32;
     if (opt.hidden <= 0) opt.hidden = 64;
     if (opt.heads <= 0) opt.heads = 1;
+    if (opt.blocks <= 0) opt.blocks = 1;
     if (opt.lr <= 0.0f) opt.lr = 0.003f;
     if (opt.dim % opt.heads != 0) {
         fprintf(stderr, "dim=%d must be divisible by heads=%d\n", opt.dim, opt.heads);
@@ -726,10 +760,11 @@ int main(int argc, char **argv) {
     gpt_char_model_init(&model, vocab, &opt, &seed);
     gpt_char_print_architecture(&model, &opt);
     printf("opt: text=%s\n", opt.text_path);
-    printf("opt: steps=%d context=%d heads=%d lr=%.4f prompt=%s\n",
+    printf("opt: steps=%d context=%d heads=%d blocks=%d lr=%.4f prompt=%s\n",
            opt.steps,
            opt.context,
            opt.heads,
+           opt.blocks,
            opt.lr,
            opt.prompt);
     printf("opt: train=%d eval=%d vocab=%d log=%s\n", train_len, eval_len, vocab, opt.log_path);
@@ -767,7 +802,11 @@ int main(int argc, char **argv) {
             adam.beta2 = 0.999f;
             adam.eps = 1e-8f;
             adam.timestep = ++model.adam_step;
-            tensor_adam_step(model.params, model.adam_m1, model.adam_m2, GPT_PARAM_COUNT, &adam);
+            tensor_adam_step(model.params.items,
+                             model.adam_m1.items,
+                             model.adam_m2.items,
+                             (size_t)model.params.len,
+                             &adam);
         }
 
         if (step == 1 || step % 100 == 0 || step == opt.steps) {
